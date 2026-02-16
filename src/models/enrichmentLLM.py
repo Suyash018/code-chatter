@@ -1,0 +1,74 @@
+from pydantic import BaseModel, Field
+from typing import Literal
+
+class FunctionEnrichment(BaseModel):
+    """Structured output schema for function/method enrichment."""
+
+    purpose: str = Field(
+        description="One-line description of what this function does"
+    )
+    summary: str = Field(
+        description="2-3 sentence detailed explanation of the implementation"
+    )
+    design_patterns: list[str] = Field(
+        default_factory=list,
+        description="Design patterns used, e.g. singleton, factory, observer, "
+        "decorator, strategy, template_method, dependency_injection, "
+        "middleware, mixin, registry, facade, adapter, proxy, "
+        "chain_of_responsibility, command",
+    )
+    complexity: Literal["low", "medium", "high"] = Field(
+        description="Code complexity level"
+    )
+    side_effects: list[str] = Field(
+        default_factory=list,
+        description="Side effects such as modifies_state, io_operation, "
+        "raises_exception, network_call, database_write",
+    )
+    domain_concepts: list[str] = Field(
+        default_factory=list,
+        description="Domain concepts such as routing, validation, middleware, "
+        "authentication, authorization, serialization, error_handling, "
+        "request_processing, configuration, lifecycle",
+    )
+    parameters_explained: dict[str, str] = Field(
+        default_factory=dict,
+        description="Mapping of parameter name to a short explanation of what it does",
+    )
+
+
+class ClassEnrichment(BaseModel):
+    """Structured output schema for class enrichment."""
+
+    purpose: str = Field(
+        description="One-line description of the class responsibility"
+    )
+    summary: str = Field(
+        description="2-3 sentence detailed explanation"
+    )
+    design_patterns: list[str] = Field(
+        default_factory=list,
+        description="Design patterns used, e.g. singleton, factory, observer, "
+        "decorator, strategy, template_method, dependency_injection, "
+        "middleware, mixin, registry, facade, adapter, proxy, "
+        "chain_of_responsibility, command",
+    )
+    role: Literal[
+        "controller", "model", "service", "utility",
+        "base_class", "mixin", "protocol", "other",
+    ] = Field(description="Primary architectural role of this class")
+    key_methods: list[str] = Field(
+        default_factory=list,
+        description="Most important method names",
+    )
+    collaborators: list[str] = Field(
+        default_factory=list,
+        description="Names of other classes this works closely with",
+    )
+    domain_concepts: list[str] = Field(
+        default_factory=list,
+        description="Domain concepts such as routing, validation, middleware, "
+        "authentication, authorization, serialization, error_handling, "
+        "request_processing, configuration, lifecycle",
+    )
+

@@ -5,7 +5,9 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "docstring-parser>=0.17.0",
     "fastapi[all]>=0.129.0",
+    "gitpython>=3.1.46",
     "langchain>=1.2.10",
     "langchain-community>=0.4.1",
     "langchain-core>=1.2.13",
@@ -14,6 +16,7 @@ dependencies = [
     "langchain-openai>=1.1.9",
     "langgraph>=1.0.8",
     "neo4j>=6.1.0",
+    "pydantic-settings>=2.7.0",
     "python-dotenv>=1.2.1",
     "requests>=2.32.5",
 ]

@@ -3,12 +3,18 @@ Repository Manager
 
 Handles git operations: cloning, pulling, file discovery,
 reading files, and computing diffs between commits.
+
+Uses GitPython for all git operations (deployment-friendly).
 """
 
 import asyncio
 import os
 import logging
+import shutil
+import tempfile
 from pathlib import Path
+
+import git
 
 logger = logging.getLogger("indexer-agent.repository")
 
@@ -17,6 +23,8 @@ SKIP_DIRS = {
     "__pycache__", ".git", ".tox", ".mypy_cache", ".pytest_cache",
     "node_modules", ".eggs", "*.egg-info", "venv", ".venv", "env",
     "build", "dist", ".nox",
+    "docs_src",  "docs",
+    # "tests",
 }
 
 SKIP_FILES = {
@@ -25,26 +33,29 @@ SKIP_FILES = {
 
 
 class RepositoryManager:
-    """Manages git repository operations for the indexer."""
+    """Manages git repository operations for the indexer via GitPython."""
 
-    def __init__(self, clone_dir: str = "/tmp/indexer-repos"):
-        self._clone_dir = Path(clone_dir)
+    def __init__(self, clone_dir: str | None = None):
+        if clone_dir:
+            self._clone_dir = Path(clone_dir)
+            self._is_temp = False
+        else:
+            self._clone_dir = Path(tempfile.mkdtemp(prefix="indexer-repos-"))
+            self._is_temp = True
         self._clone_dir.mkdir(parents=True, exist_ok=True)
 
-    async def _run_git(self, *args: str, cwd: str | Path | None = None) -> str:
-        """Run a git command and return stdout."""
-        proc = await asyncio.create_subprocess_exec(
-            "git", *args,
-            cwd=cwd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"git {' '.join(args)} failed: {stderr.decode().strip()}"
-            )
-        return stdout.decode().strip()
+    def cleanup(self) -> None:
+        """Remove the cloned repository directory."""
+        if self._clone_dir.exists():
+            shutil.rmtree(self._clone_dir, ignore_errors=True)
+            logger.info("Cleaned up temporary clone directory: %s", self._clone_dir)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        if self._is_temp:
+            self.cleanup()
 
     async def clone(self, repo_url: str, branch: str = "main") -> Path:
         """
@@ -53,29 +64,35 @@ class RepositoryManager:
         Returns:
             Path to the cloned repository.
         """
-        # Derive repo name from URL
         repo_name = repo_url.rstrip("/").split("/")[-1].replace(".git", "")
         repo_path = self._clone_dir / repo_name
 
         if repo_path.exists():
-            # Already cloned — fetch and reset
-            logger.info(f"Repository exists at {repo_path}, pulling latest...")
-            await self._run_git("fetch", "--all", cwd=repo_path)
-            await self._run_git("checkout", branch, cwd=repo_path)
-            await self._run_git("reset", "--hard", f"origin/{branch}", cwd=repo_path)
+            logger.info("Repository exists at %s, pulling latest...", repo_path)
+            repo = git.Repo(repo_path)
+
+            def _fetch_and_reset():
+                repo.remotes.origin.fetch()
+                repo.git.checkout(branch)
+                repo.git.reset("--hard", f"origin/{branch}")
+
+            await asyncio.to_thread(_fetch_and_reset)
         else:
-            # Fresh clone
-            logger.info(f"Cloning {repo_url} to {repo_path}...")
-            await self._run_git(
-                "clone", "--branch", branch, "--single-branch",
-                repo_url, str(repo_path),
+            logger.info("Cloning %s to %s...", repo_url, repo_path)
+            await asyncio.to_thread(
+                git.Repo.clone_from,
+                repo_url,
+                str(repo_path),
+                branch=branch,
+                multi_options=["--single-branch"],
             )
 
         return repo_path
 
     async def get_head_commit(self, repo_path: Path) -> str:
         """Get the HEAD commit hash."""
-        return await self._run_git("rev-parse", "HEAD", cwd=repo_path)
+        repo = git.Repo(repo_path)
+        return repo.head.commit.hexsha
 
     async def discover_python_files(self, repo_path: Path) -> list[str]:
         """
@@ -85,7 +102,6 @@ class RepositoryManager:
         python_files = []
 
         for root, dirs, files in os.walk(repo_path):
-            # Skip unwanted directories
             dirs[:] = [
                 d for d in dirs
                 if d not in SKIP_DIRS and not d.endswith(".egg-info")
@@ -98,11 +114,11 @@ class RepositoryManager:
                     continue
 
                 full_path = Path(root) / filename
-                rel_path = str(full_path.relative_to(repo_path))
+                rel_path = str(full_path.relative_to(repo_path)).replace("\\", "/")
                 python_files.append(rel_path)
 
         python_files.sort()
-        logger.info(f"Discovered {len(python_files)} Python files")
+        logger.info("Discovered %d Python files", len(python_files))
         return python_files
 
     async def read_file(self, repo_path: Path, file_path: str) -> str:
@@ -115,12 +131,11 @@ class RepositoryManager:
         Read file from the current working repo directory.
         Used during incremental updates.
         """
-        # Find the repo in our clone directory
         repos = list(self._clone_dir.iterdir())
         if not repos:
             raise FileNotFoundError("No repository cloned")
 
-        repo_path = repos[0]  # Use the first (and typically only) repo
+        repo_path = repos[0]
         return await self.read_file(repo_path, file_path)
 
     async def get_changed_files(
@@ -133,42 +148,46 @@ class RepositoryManager:
             Dict with keys 'added', 'modified', 'deleted', 'renamed'.
             Each value is a list of file paths.
         """
-        # Get diff with rename detection
-        output = await self._run_git(
-            "diff", "--name-status", "-M", from_commit, to_commit,
-            "--", "*.py",
-            cwd=repo_path,
-        )
+        repo = git.Repo(repo_path)
 
-        changes = {
-            "added": [],
-            "modified": [],
-            "deleted": [],
-            "renamed": [],  # List of (old_path, new_path) tuples
-        }
+        def _diff() -> dict[str, list]:
+            output = repo.git.diff(
+                "--name-status", "-M", from_commit, to_commit, "--", "*.py"
+            )
 
-        if not output:
+            changes: dict[str, list] = {
+                "added": [],
+                "modified": [],
+                "deleted": [],
+                "renamed": [],
+            }
+
+            if not output:
+                return changes
+
+            for line in output.splitlines():
+                parts = line.split("\t")
+                status = parts[0]
+
+                if status == "A":
+                    changes["added"].append(parts[1])
+                elif status == "M":
+                    changes["modified"].append(parts[1])
+                elif status == "D":
+                    changes["deleted"].append(parts[1])
+                elif status.startswith("R"):
+                    changes["renamed"].append((parts[1], parts[2]))
+
             return changes
 
-        for line in output.splitlines():
-            parts = line.split("\t")
-            status = parts[0]
-
-            if status == "A":
-                changes["added"].append(parts[1])
-            elif status == "M":
-                changes["modified"].append(parts[1])
-            elif status == "D":
-                changes["deleted"].append(parts[1])
-            elif status.startswith("R"):
-                # Rename: R100\told_path\tnew_path
-                changes["renamed"].append((parts[1], parts[2]))
+        changes = await asyncio.to_thread(_diff)
 
         logger.info(
-            f"Changes: {len(changes['added'])} added, "
-            f"{len(changes['modified'])} modified, "
-            f"{len(changes['deleted'])} deleted, "
-            f"{len(changes['renamed'])} renamed"
+            "Changes: %d added, %d modified, %d deleted, %d renamed",
+            len(changes["added"]),
+            len(changes["modified"]),
+            len(changes["deleted"]),
+            len(changes["renamed"]),
         )
         return changes
 

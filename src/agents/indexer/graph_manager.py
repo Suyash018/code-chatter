@@ -14,9 +14,41 @@ Handles all interactions with the Neo4j knowledge graph:
 import json as _json
 import logging
 
-from src.database import Neo4jHandler
+from src.shared.database import Neo4jHandler
+from src.agents.indexer.ast_parser import path_to_module
 
 logger = logging.getLogger("indexer-agent.graph_manager")
+
+
+def _build_embedding_text(node: dict) -> str:
+    """Build a text representation of a graph node for vector embedding.
+
+    Combines the most semantically meaningful properties so that
+    similarity search finds nodes by meaning, not just name.
+    """
+    parts = []
+
+    label = node.get("label", "Entity")
+    name = node.get("name", "")
+    parts.append(f"{label}: {name}")
+
+    if node.get("purpose"):
+        parts.append(f"Purpose: {node['purpose']}")
+
+    if node.get("summary"):
+        parts.append(f"Summary: {node['summary']}")
+
+    if node.get("docstring"):
+        parts.append(f"Docstring: {node['docstring'][:500]}")
+
+    concepts = node.get("domain_concepts")
+    if concepts:
+        if isinstance(concepts, list):
+            parts.append(f"Concepts: {', '.join(concepts)}")
+        else:
+            parts.append(f"Concepts: {concepts}")
+
+    return "\n".join(parts)
 
 
 class Neo4jGraphManager:
@@ -76,11 +108,33 @@ class Neo4jGraphManager:
             "CREATE INDEX class_attr_name IF NOT EXISTS FOR (a:ClassAttribute) ON (a.name)",
         ]
 
+        # Vector indexes for hybrid search (requires Neo4j 5.11+)
+        vector_indexes = [
+            """CREATE VECTOR INDEX func_embedding IF NOT EXISTS
+               FOR (n:Function) ON (n.embedding)
+               OPTIONS {indexConfig: {
+                 `vector.dimensions`: 3072,
+                 `vector.similarity_function`: 'cosine'
+               }}""",
+            """CREATE VECTOR INDEX class_embedding IF NOT EXISTS
+               FOR (n:Class) ON (n.embedding)
+               OPTIONS {indexConfig: {
+                 `vector.dimensions`: 3072,
+                 `vector.similarity_function`: 'cosine'
+               }}""",
+        ]
+
         for stmt in constraints + indexes:
             try:
                 await self._write(stmt)
             except Exception as e:
                 logger.debug(f"Schema statement skipped: {e}")
+
+        for stmt in vector_indexes:
+            try:
+                await self._write(stmt)
+            except Exception as e:
+                logger.warning(f"Vector index creation skipped (may need Neo4j 5.11+): {e}")
 
         logger.info("Neo4j schema ensured")
 
@@ -93,12 +147,7 @@ class Neo4jGraphManager:
 
     async def create_file_node(self, file_path: str, content_hash: str) -> None:
         """Create or update a File node."""
-        module_name = (
-            file_path.replace(".py", "")
-            .replace("/", ".")
-            .replace("__init__", "")
-            .strip(".")
-        )
+        module_name = path_to_module(file_path)
 
         await self._write(
             """
@@ -113,7 +162,7 @@ class Neo4jGraphManager:
             """,
             {
                 "path": file_path,
-                "name": file_path.split("/")[-1],
+                "name": file_path.replace("\\", "/").split("/")[-1],
                 "hash": content_hash,
                 "module": module_name,
             },
@@ -659,12 +708,7 @@ class Neo4jGraphManager:
 
     async def delete_imports_for_file(self, file_path: str) -> None:
         """Delete all import edges originating from a file's module."""
-        module_name = (
-            file_path.replace(".py", "")
-            .replace("/", ".")
-            .replace("__init__", "")
-            .strip(".")
-        )
+        module_name = path_to_module(file_path)
         await self._write(
             """
             MATCH (m:Module {qualified_name: $mod})-[r:IMPORTS]->()
@@ -680,18 +724,62 @@ class Neo4jGraphManager:
         Resolve CALLS edges by matching call names to Function nodes.
         Also resolves INHERITS_FROM for unresolved base classes.
         Returns the number of edges created.
+
+        Uses a 3-pass strategy to avoid false edges from ambiguous names:
+          1. Same-file: caller and callee share the same File ancestor
+          2. Import-based: caller's module imports the callee's module
+          3. Unique global: callee name is globally unique (one function)
         """
         edge_count = 0
 
-        # Resolve CALLS: match function _calls list to existing Function nodes
+        # Pass 1: Same-file call resolution (strongest signal)
         result = await self._run(
             """
             MATCH (caller:Function)
             WHERE caller._calls IS NOT NULL AND size(caller._calls) > 0
-            WITH caller
+            MATCH (f:File)-[:CONTAINS*1..3]->(caller)
+            WITH caller, f
             UNWIND caller._calls AS callee_name
+            MATCH (f)-[:CONTAINS*1..3]->(callee:Function {name: callee_name})
+            WHERE caller <> callee
+            MERGE (caller)-[:CALLS]->(callee)
+            RETURN count(*) as created
+            """
+        )
+        if result:
+            edge_count += result[0].get("created", 0)
+
+        # Pass 2: Cross-file via import relationships
+        result = await self._run(
+            """
+            MATCH (caller:Function)
+            WHERE caller._calls IS NOT NULL AND size(caller._calls) > 0
+            MATCH (f1:File)-[:CONTAINS*1..3]->(caller)
+            MATCH (f1)-[:DEFINES_MODULE]->(src:Module)-[:IMPORTS]->(tgt:Module)<-[:DEFINES_MODULE]-(f2:File)
+            WITH caller, f2
+            UNWIND caller._calls AS callee_name
+            MATCH (f2)-[:CONTAINS*1..3]->(callee:Function {name: callee_name})
+            WHERE caller <> callee AND NOT (caller)-[:CALLS]->(callee)
+            MERGE (caller)-[:CALLS]->(callee)
+            RETURN count(*) as created
+            """
+        )
+        if result:
+            edge_count += result[0].get("created", 0)
+
+        # Pass 3: Globally unique name match (skip ambiguous names)
+        result = await self._run(
+            """
+            MATCH (caller:Function)
+            WHERE caller._calls IS NOT NULL AND size(caller._calls) > 0
+            UNWIND caller._calls AS callee_name
+            WITH caller, callee_name
+            WHERE NOT (caller)-[:CALLS]->(:Function {name: callee_name})
             MATCH (callee:Function {name: callee_name})
             WHERE caller <> callee
+            WITH caller, callee_name, collect(DISTINCT callee) AS candidates
+            WHERE size(candidates) = 1
+            WITH caller, candidates[0] AS callee
             MERGE (caller)-[:CALLS]->(callee)
             RETURN count(*) as created
             """
@@ -720,24 +808,61 @@ class Neo4jGraphManager:
         return edge_count
 
     async def resolve_calls_for_function(self, qualified_name: str, calls: list[str]) -> None:
-        """Resolve CALLS edges for a specific function."""
-        # Delete existing outgoing CALLS
+        """Resolve CALLS edges for a specific function using same-file, import, and unique-name strategies."""
         await self._write(
             "MATCH (f:Function {qualified_name: $qname})-[r:CALLS]->() DELETE r",
             {"qname": qualified_name},
         )
 
-        # Create new CALLS edges
-        for callee_name in calls:
-            await self._write(
-                """
-                MATCH (caller:Function {qualified_name: $caller_qname})
-                MATCH (callee:Function {name: $callee_name})
-                WHERE caller <> callee
-                MERGE (caller)-[:CALLS]->(callee)
-                """,
-                {"caller_qname": qualified_name, "callee_name": callee_name},
-            )
+        if not calls:
+            return
+
+        # Same-file matches
+        await self._write(
+            """
+            MATCH (caller:Function {qualified_name: $qname})
+            MATCH (f:File)-[:CONTAINS*1..3]->(caller)
+            WITH caller, f, $calls AS call_list
+            UNWIND call_list AS callee_name
+            MATCH (f)-[:CONTAINS*1..3]->(callee:Function {name: callee_name})
+            WHERE caller <> callee
+            MERGE (caller)-[:CALLS]->(callee)
+            """,
+            {"qname": qualified_name, "calls": calls},
+        )
+
+        # Import-based cross-file matches
+        await self._write(
+            """
+            MATCH (caller:Function {qualified_name: $qname})
+            MATCH (f1:File)-[:CONTAINS*1..3]->(caller)
+            MATCH (f1)-[:DEFINES_MODULE]->(src:Module)-[:IMPORTS]->(tgt:Module)<-[:DEFINES_MODULE]-(f2:File)
+            WITH caller, f2, $calls AS call_list
+            UNWIND call_list AS callee_name
+            MATCH (f2)-[:CONTAINS*1..3]->(callee:Function {name: callee_name})
+            WHERE caller <> callee AND NOT (caller)-[:CALLS]->(callee)
+            MERGE (caller)-[:CALLS]->(callee)
+            """,
+            {"qname": qualified_name, "calls": calls},
+        )
+
+        # Unique global name matches for remaining unresolved calls
+        await self._write(
+            """
+            MATCH (caller:Function {qualified_name: $qname})
+            WITH caller, $calls AS call_list
+            UNWIND call_list AS callee_name
+            WITH caller, callee_name
+            WHERE NOT (caller)-[:CALLS]->(:Function {name: callee_name})
+            MATCH (callee:Function {name: callee_name})
+            WHERE caller <> callee
+            WITH caller, callee_name, collect(DISTINCT callee) AS candidates
+            WHERE size(candidates) = 1
+            WITH caller, candidates[0] AS callee
+            MERGE (caller)-[:CALLS]->(callee)
+            """,
+            {"qname": qualified_name, "calls": calls},
+        )
 
     # ─── Enrichment ────────────────────────────────────────
 
@@ -786,7 +911,12 @@ class Neo4jGraphManager:
                     "qname": qualified_name,
                     "side_effects": enrichment.get("side_effects", []),
                     "params_explained": _json.dumps(
-                        enrichment.get("parameters_explained", {})
+                        {
+                            p["name"]: p["explanation"]
+                            for p in enrichment.get("parameters_explained", [])
+                        }
+                        if isinstance(enrichment.get("parameters_explained"), list)
+                        else enrichment.get("parameters_explained", {})
                     ),
                 },
             )
@@ -840,13 +970,25 @@ class Neo4jGraphManager:
                 {"qname": qualified_name, "collab_name": collab},
             )
 
+        # Data flow edges (from Paper 3 — data-flow awareness)
+        for target in enrichment.get("data_flows_to", []):
+            await self._write(
+                """
+                MATCH (n {qualified_name: $qname})
+                MATCH (t)
+                WHERE (t:Function OR t:Class) AND t.name = $target_name AND n <> t
+                MERGE (n)-[:DATA_FLOWS_TO]->(t)
+                """,
+                {"qname": qualified_name, "target_name": target},
+            )
+
     async def delete_semantic_edges(self, qualified_name: str) -> None:
         """Delete all semantic edges for a node before re-enrichment."""
         await self._write(
             """
             MATCH (n {qualified_name: $qname})-[r]->()
             WHERE type(r) IN ['IMPLEMENTS_PATTERN', 'RELATES_TO_CONCEPT',
-                              'COLLABORATES_WITH', 'DATA_FLOWS_TO', 'VALIDATES']
+                              'COLLABORATES_WITH', 'DATA_FLOWS_TO']
             DELETE r
             """,
             {"qname": qualified_name},
@@ -887,9 +1029,68 @@ class Neo4jGraphManager:
             {"qname": qualified_name, "embedding": embedding},
         )
 
-    async def create_all_embeddings(self) -> None:
-        """Placeholder — actual embedding creation needs an embedding API call."""
-        logger.info("Embedding creation placeholder — integrate with embedding API")
+    async def create_all_embeddings(self, embeddings_model, batch_size: int = 50) -> int:
+        """
+        Generate and store vector embeddings for all Function and Class nodes.
+
+        Uses enrichment properties (purpose, summary) when available,
+        falling back to docstring and name.
+
+        Args:
+            embeddings_model: LangChain embeddings model with aembed_documents().
+            batch_size: Number of texts to embed per API call.
+
+        Returns:
+            Number of nodes embedded.
+        """
+        nodes = await self._run(
+            """
+            MATCH (n)
+            WHERE (n:Function OR n:Class) AND n.qualified_name IS NOT NULL
+            RETURN n.qualified_name AS qname,
+                   n.name AS name,
+                   n.docstring AS docstring,
+                   n.purpose AS purpose,
+                   n.summary AS summary,
+                   n.domain_concepts AS domain_concepts,
+                   labels(n)[0] AS label
+            """
+        )
+
+        if not nodes:
+            logger.info("No nodes to embed")
+            return 0
+
+        logger.info("Generating embeddings for %d nodes...", len(nodes))
+        embedded_count = 0
+
+        for i in range(0, len(nodes), batch_size):
+            batch = nodes[i : i + batch_size]
+
+            texts = []
+            qnames = []
+            for node in batch:
+                texts.append(_build_embedding_text(node))
+                qnames.append(node["qname"])
+
+            try:
+                vectors = await embeddings_model.aembed_documents(texts)
+            except Exception as e:
+                logger.error("Embedding batch %d failed: %s", i // batch_size, e)
+                continue
+
+            for qname, vector in zip(qnames, vectors):
+                await self.set_embedding(qname, vector)
+                embedded_count += 1
+
+            logger.info(
+                "Embedded %d/%d nodes",
+                min(i + batch_size, len(nodes)),
+                len(nodes),
+            )
+
+        logger.info("Embedding complete: %d nodes", embedded_count)
+        return embedded_count
 
     # ─── Query: Existing Entities for a File ───────────────
 

@@ -10,9 +10,9 @@ load_dotenv()
 # ─── LLM Model Factories ─────────────────────────────────
 
 
-def get_openai_model() -> ChatOpenAI:
+def get_openai_model(model_name: str = "gpt-5.2-2025-12-11") -> ChatOpenAI:
     return ChatOpenAI(
-        model="gpt-5.2-2025-12-11",
+        model=model_name,
         api_key=os.getenv("OPENAI_API_KEY"),
     )
 

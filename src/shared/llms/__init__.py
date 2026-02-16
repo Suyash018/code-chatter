@@ -1,6 +1,6 @@
 from .models import (
     get_openai_model,
-    get_openai_embeddings
+    get_openai_embeddings,
 )
 
 __all__ = [

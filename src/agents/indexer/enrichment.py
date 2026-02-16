@@ -13,8 +13,8 @@ from typing import Any
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 
-from src.LLMS import get_openai_model
-from src.models import FunctionEnrichment, ClassEnrichment
+from src.shared.llms import get_openai_model
+from src.shared.models import FunctionEnrichment, ClassEnrichment
 
 logger = logging.getLogger("indexer-agent.enrichment")
 
@@ -30,6 +30,11 @@ Valid domain concepts: routing, validation, middleware, authentication, \
 authorization, dependency_injection, serialization, error_handling, \
 request_processing, response_building, websocket, cors, testing, \
 configuration, lifecycle, openapi, documentation.
+
+For data_flows_to: identify other functions or classes that this entity \
+sends data to — e.g. it returns a value consumed by another function, \
+passes data through a callback, writes to shared state read by another, \
+or transforms a request object that flows downstream.
 """
 
 
@@ -145,12 +150,16 @@ class LLMEnricher:
     def __init__(
         self,
         model: ChatOpenAI | None = None,
-        batch_size: int = 10,
+        batch_size: int = 30,
         max_retries: int = 3,
     ):
-        base_model = model or get_openai_model()
-        self._function_chain = base_model.with_structured_output(FunctionEnrichment)
-        self._class_chain = base_model.with_structured_output(ClassEnrichment)
+        base_model = model or get_openai_model("gpt-5-mini-2025-08-07")
+        self._function_chain = base_model.with_structured_output(
+            FunctionEnrichment
+        )
+        self._class_chain = base_model.with_structured_output(
+            ClassEnrichment
+        )
         self._batch_size = batch_size
         self._max_retries = max_retries
 
@@ -186,10 +195,17 @@ class LLMEnricher:
                 if attempt < self._max_retries - 1:
                     await asyncio.sleep(1.0 * (attempt + 1))
 
-        # Fallback: return minimal enrichment
+        # Fallback: return minimal enrichment matching the entity type
         logger.error(f"All enrichment attempts failed for {entity.get('qualified_name')}")
+        docstring_snippet = entity.get("docstring", "") or "Unable to enrich"
+        if entity_type == "class":
+            return ClassEnrichment(
+                purpose=docstring_snippet,
+                summary="",
+                role="other",
+            ).model_dump()
         return FunctionEnrichment(
-            purpose=entity.get("docstring", "")[:200] or "Unable to enrich",
+            purpose=docstring_snippet,
             summary="",
             complexity="low",
         ).model_dump()
@@ -202,7 +218,7 @@ class LLMEnricher:
         Enriches nested functions with parent context.
         Returns the number of entities enriched.
         """
-        from src.graph_making.graph_manager import Neo4jGraphManager
+        from src.agents.indexer.graph_manager import Neo4jGraphManager
 
         gm: Neo4jGraphManager = graph_manager
         enriched_count = 0
@@ -218,8 +234,10 @@ class LLMEnricher:
                    f.is_async AS is_async
             """
         )
+        total_functions = len(functions)
+        logger.info("Enrichment: %d functions to process", total_functions)
 
-        for i in range(0, len(functions), self._batch_size):
+        for i in range(0, total_functions, self._batch_size):
             batch = functions[i : i + self._batch_size]
             tasks = []
 
@@ -272,6 +290,11 @@ class LLMEnricher:
                     logger.error(f"Enrichment task failed: {r}")
                 else:
                     enriched_count += 1
+            logger.info(
+                "Enrichment progress: %d/%d functions done",
+                min(i + self._batch_size, total_functions),
+                total_functions,
+            )
 
         # ─── Classes ─────────────────────────────────────────────
         classes = await gm._run(
@@ -282,8 +305,10 @@ class LLMEnricher:
                    c.content_hash AS content_hash, c.docstring AS docstring
             """
         )
+        total_classes = len(classes)
+        logger.info("Enrichment: %d classes to process", total_classes)
 
-        for i in range(0, len(classes), self._batch_size):
+        for i in range(0, total_classes, self._batch_size):
             batch = classes[i : i + self._batch_size]
             tasks = []
 
@@ -343,7 +368,15 @@ class LLMEnricher:
                     logger.error(f"Enrichment task failed: {r}")
                 else:
                     enriched_count += 1
+            logger.info(
+                "Enrichment progress: %d/%d classes done",
+                min(i + self._batch_size, total_classes),
+                total_classes,
+            )
 
+        logger.info(
+            "Enrichment complete: %d total entities enriched", enriched_count
+        )
         return enriched_count
 
     async def _build_function_context(self, gm, func: dict) -> dict:

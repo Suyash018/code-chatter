@@ -81,6 +81,19 @@ class ParsedClass:
     methods: list[dict] = field(default_factory=list)
 
 
+def path_to_module(file_path: str) -> str:
+    """
+    Convert a file path to a Python module name.
+    e.g., 'fastapi/routing.py' -> 'fastapi.routing'
+         'fastapi\\__init__.py' -> 'fastapi'
+
+    Handles both forward slashes and backslashes (Windows).
+    """
+    path = file_path.replace(".py", "")
+    path = path.replace("/__init__", "").replace("\\__init__", "")
+    return path.replace("/", ".").replace("\\", ".").strip(".")
+
+
 class PythonASTParser:
     """
     Deterministic AST parser for Python files.
@@ -509,14 +522,14 @@ class PythonASTParser:
 
         Examples:
             fastapi/__init__.py (is_package=True, module="fastapi"):
-              from .applications import X → fastapi.applications
+              from .applications import X -> fastapi.applications
 
             fastapi/routing.py (is_package=False, module="fastapi.routing"):
-              from .applications import X → fastapi.applications
+              from .applications import X -> fastapi.applications
 
             fastapi/dependencies/utils.py (is_package=False, module="fastapi.dependencies.utils"):
-              from .models import X → fastapi.dependencies.models
-              from ..params import X → fastapi.params
+              from .models import X -> fastapi.dependencies.models
+              from ..params import X -> fastapi.params
         """
         parts = current_module.split(".")
 
@@ -659,13 +672,5 @@ class PythonASTParser:
         return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
 
     def _path_to_module(self, file_path: str) -> str:
-        """
-        Convert a file path to a Python module name.
-        e.g., 'fastapi/routing.py' → 'fastapi.routing'
-        """
-        # Remove .py extension
-        path = file_path.replace(".py", "")
-        # Remove __init__ (package init files)
-        path = path.replace("/__init__", "")
-        # Convert separators to dots
-        return path.replace("/", ".").replace("\\", ".").strip(".")
+        """Convert a file path to a Python module name. Delegates to module-level function."""
+        return path_to_module(file_path)

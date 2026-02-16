@@ -1,6 +1,14 @@
 from pydantic import BaseModel, Field
 from typing import Literal
 
+
+class ParameterExplanation(BaseModel):
+    """A single parameter and its explanation."""
+
+    name: str = Field(description="The parameter name")
+    explanation: str = Field(description="Short explanation of what this parameter does")
+
+
 class FunctionEnrichment(BaseModel):
     """Structured output schema for function/method enrichment."""
 
@@ -31,9 +39,14 @@ class FunctionEnrichment(BaseModel):
         "authentication, authorization, serialization, error_handling, "
         "request_processing, configuration, lifecycle",
     )
-    parameters_explained: dict[str, str] = Field(
-        default_factory=dict,
-        description="Mapping of parameter name to a short explanation of what it does",
+    parameters_explained: list[ParameterExplanation] = Field(
+        default_factory=list,
+        description="List of parameter explanations for each parameter",
+    )
+    data_flows_to: list[str] = Field(
+        default_factory=list,
+        description="Names of functions or classes that this entity sends data to "
+        "(e.g. passes return values, writes to shared state consumed by another)",
     )
 
 
@@ -71,4 +84,8 @@ class ClassEnrichment(BaseModel):
         "authentication, authorization, serialization, error_handling, "
         "request_processing, configuration, lifecycle",
     )
-
+    data_flows_to: list[str] = Field(
+        default_factory=list,
+        description="Names of functions or classes that this class sends data to "
+        "(e.g. passes return values, writes to shared state consumed by another)",
+    )

@@ -13,7 +13,9 @@
       "Bash(python -c:*)",
       "Bash(uv pip install:*)",
       "Bash(python:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(ls:*)",
+      "Bash(chmod:*)"
     ]
   }
 }

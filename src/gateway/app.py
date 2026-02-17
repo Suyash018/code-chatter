@@ -5,11 +5,106 @@ External interface for the multi-agent system.
 Routes requests to the Orchestrator Agent.
 """
 
-# TODO: Implement FastAPI application
-# Endpoints:
-#   POST /api/chat         — Send message, receive response (streaming option)
-#   POST /api/index        — Trigger repository indexing
-#   GET  /api/index/status/{job_id} — Get indexing job status
-#   GET  /api/agents/health — Health check for all agents
-#   GET  /api/graph/statistics — Knowledge graph statistics
-#   WS   /ws/chat          — Real-time chat with streaming
+import sys
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from langchain_mcp_adapters.client import MultiServerMCPClient
+
+from src.gateway.config import GatewaySettings
+from src.gateway.routes import chat, health, index
+from src.shared.logging import setup_logging
+
+logger = setup_logging("gateway.app", level="INFO")
+
+# Global settings
+settings = GatewaySettings()
+
+# Global orchestrator MCP client (initialized on startup)
+orchestrator_client: MultiServerMCPClient | None = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifecycle manager for the FastAPI app.
+
+    Initializes the Orchestrator MCP client on startup,
+    shuts it down on shutdown.
+    """
+    global orchestrator_client
+
+    logger.info("Starting FastAPI Gateway")
+    logger.info(f"Connecting to Orchestrator MCP server")
+
+    # Initialize the orchestrator client
+    orchestrator_client = MultiServerMCPClient({
+        "orchestrator": {
+            "command": sys.executable,
+            "args": ["-m", "src.agents.orchestrator.server"],
+            "transport": "stdio",
+        }
+    })
+
+    # Store client in app state for route access
+    app.state.orchestrator_client = orchestrator_client
+
+    logger.info("Gateway initialized successfully")
+
+    yield
+
+    # Cleanup
+    logger.info("Shutting down FastAPI Gateway")
+    orchestrator_client = None
+
+
+# Create FastAPI app
+app = FastAPI(
+    title="FastAPI Repository Chat Agent - MCP Multi-Agent System",
+    description="Multi-agent system for answering questions about the FastAPI codebase",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Register routers
+app.include_router(chat.router, prefix="/api", tags=["Chat"])
+app.include_router(index.router, prefix="/api", tags=["Indexing"])
+app.include_router(health.router, prefix="/api", tags=["Health"])
+
+# Root endpoint
+@app.get("/", tags=["Root"])
+async def root():
+    """Root endpoint with basic info."""
+    return {
+        "name": "FastAPI Repository Chat Agent",
+        "version": "0.1.0",
+        "status": "operational",
+        "endpoints": {
+            "chat": "/api/chat",
+            "websocket": "/ws/chat",
+            "index": "/api/index",
+            "health": "/api/agents/health",
+            "statistics": "/api/graph/statistics",
+        }
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "src.gateway.app:app",
+        host=settings.host,
+        port=settings.port,
+        reload=False,
+        log_level="info",
+    )

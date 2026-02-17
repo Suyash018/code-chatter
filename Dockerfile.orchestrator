@@ -1,0 +1,25 @@
+# Dockerfile for Orchestrator Agent
+FROM python:3.12-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy dependency files
+COPY pyproject.toml uv.lock* ./
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir .
+
+# Copy application code
+COPY src/ ./src/
+COPY .env.example ./.env.example
+COPY .env ./.env
+
+# Run the orchestrator MCP server (stdio transport)
+CMD ["python", "-m", "src.agents.orchestrator.server"]

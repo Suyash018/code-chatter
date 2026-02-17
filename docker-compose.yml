@@ -1,0 +1,100 @@
+version: '3.8'
+
+services:
+  # ═══════════════════════════════════════════════════════════
+  # Neo4j Graph Database
+  # ═══════════════════════════════════════════════════════════
+  neo4j:
+    image: neo4j:5.15.0
+    container_name: graphical-rag-neo4j
+    environment:
+      - NEO4J_AUTH=${NEO4J_USERNAME}/${NEO4J_PASSWORD}
+      - NEO4J_ACCEPT_LICENSE_AGREEMENT=yes
+      - NEO4J_server_memory_heap_initial__size=512m
+      - NEO4J_server_memory_heap_max__size=2G
+      - NEO4J_server_memory_pagecache_size=512m
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
+      - NEO4J_dbms_security_procedures_allowlist=apoc.*,gds.*
+    ports:
+      - "7474:7474"  # HTTP
+      - "7687:7687"  # Bolt
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_import:/import
+      - neo4j_plugins:/plugins
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "${NEO4J_USERNAME}", "-p", "${NEO4J_PASSWORD}", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - graphical-rag-network
+
+  # ═══════════════════════════════════════════════════════════
+  # FastAPI Gateway
+  # ═══════════════════════════════════════════════════════════
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    container_name: graphical-rag-gateway
+    env_file:
+      - .env
+    environment:
+      - GATEWAY_HOST=0.0.0.0
+      - GATEWAY_PORT=8000
+      - NEO4J_URI=bolt://neo4j:7687
+    ports:
+      - "${GATEWAY_PORT:-8000}:8000"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - graphical-rag-network
+    restart: unless-stopped
+
+  # ═══════════════════════════════════════════════════════════
+  # MCP Agent Servers (stdio transport - no exposed ports)
+  # These run as services but communicate via stdio when
+  # spawned by parent agents
+  # ═══════════════════════════════════════════════════════════
+
+  # Note: MCP servers use stdio transport, so they're not
+  # long-running HTTP services. They're spawned on-demand by
+  # the gateway and parent agents.
+  #
+  # For Docker deployment, we have two options:
+  # 1. Package agents in the gateway image (simpler)
+  # 2. Run agents as separate containers with SSH/exec
+  #
+  # For this assignment, we're using option 1 - all agent
+  # code is included in the gateway image and spawned via
+  # subprocess when needed.
+
+# ═══════════════════════════════════════════════════════════
+# Volumes
+# ═══════════════════════════════════════════════════════════
+volumes:
+  neo4j_data:
+    driver: local
+  neo4j_logs:
+    driver: local
+  neo4j_import:
+    driver: local
+  neo4j_plugins:
+    driver: local
+
+# ═══════════════════════════════════════════════════════════
+# Networks
+# ═══════════════════════════════════════════════════════════
+networks:
+  graphical-rag-network:
+    driver: bridge

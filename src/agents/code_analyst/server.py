@@ -12,6 +12,7 @@ import json
 import logging
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from src.agents.code_analyst.config import CodeAnalystSettings
 from src.agents.code_analyst.graph_context import GraphContextRetriever
@@ -21,7 +22,14 @@ logger = setup_logging("code_analyst", level="INFO")
 
 # ─── Shared resources (lazy init) ─────────────────────────
 
-mcp = FastMCP("CodeAnalyst")
+# Configure transport security to allow Docker service names
+transport_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=False,
+    allowed_hosts=["code_analyst", "code_analyst:8004", "localhost", "127.0.0.1", "0.0.0.0"],
+    allowed_origins=["*"],
+)
+
+mcp = FastMCP("CodeAnalyst", transport_security=transport_security)
 
 _settings: CodeAnalystSettings | None = None
 _retriever: GraphContextRetriever | None = None

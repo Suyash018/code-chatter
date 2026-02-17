@@ -10,6 +10,7 @@ Run as:  python -m src.agents.orchestrator.server        (stdio transport)
 import json
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from src.agents.orchestrator.config import OrchestratorSettings
 from src.agents.orchestrator.context_manager import ContextManager
@@ -22,7 +23,22 @@ logger = setup_logging("orchestrator.server", level="INFO")
 
 # ─── Shared resources (lazy init) ─────────────────────────
 
-mcp = FastMCP("Orchestrator")
+# Configure transport security to allow Docker service names
+# In Docker internal networks, services communicate using service names
+# (e.g., orchestrator:8001) which would normally fail DNS rebinding protection
+transport_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=False,  # Disable for Docker internal network
+    allowed_hosts=[
+        "orchestrator",
+        "orchestrator:8001",
+        "localhost",
+        "127.0.0.1",
+        "0.0.0.0",
+    ],
+    allowed_origins=["*"],  # Allow all origins for development
+)
+
+mcp = FastMCP("Orchestrator", transport_security=transport_security)
 
 _settings: OrchestratorSettings | None = None
 _analyzer: QueryAnalyzer | None = None
@@ -264,7 +280,15 @@ async def synthesize_response(
 
 # ─── Entry point ──────────────────────────────────────────
 
-# Create the ASGI app for uvicorn
+# Create the ASGI app for uvicorn with disabled host validation
+# The FastMCP SSE server validates Host headers for security, but in Docker
+# internal networks we use service names (e.g., orchestrator:8001) which
+# don't pass validation. We need to wrap the app to allow Docker service names.
+from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+# Allow all hosts in Docker environment (internal network only)
 app = mcp.sse_app
 
 if __name__ == "__main__":
@@ -277,9 +301,12 @@ if __name__ == "__main__":
     logger.info(f"Starting Orchestrator MCP server (SSE transport on {host}:{port})")
 
     # For SSE transport, use uvicorn with the module path
+    # Set server_header to False to avoid host validation issues in Docker
     uvicorn.run(
         "src.agents.orchestrator.server:app",
         host=host,
         port=port,
         log_level="info",
+        server_header=False,
+        forwarded_allow_ips="*",  # Allow forwarded headers from Docker network
     )

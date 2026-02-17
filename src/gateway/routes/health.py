@@ -19,12 +19,12 @@ router = APIRouter()
 # Global MCP clients for health checks (lazy initialization)
 _agent_clients: dict[str, MultiServerMCPClient] = {}
 
-# Agent URL mapping
+# Agent URL mapping - SSE endpoints
 AGENT_URLS = {
-    "orchestrator": os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8001"),
-    "indexer": os.getenv("INDEXER_URL", "http://indexer:8002"),
-    "graph_query": os.getenv("GRAPH_QUERY_URL", "http://graph_query:8003"),
-    "code_analyst": os.getenv("CODE_ANALYST_URL", "http://code_analyst:8004"),
+    "orchestrator": os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8001/sse"),
+    "indexer": os.getenv("INDEXER_URL", "http://indexer:8002/sse"),
+    "graph_query": os.getenv("GRAPH_QUERY_URL", "http://graph_query:8003/sse"),
+    "code_analyst": os.getenv("CODE_ANALYST_URL", "http://code_analyst:8004/sse"),
 }
 
 

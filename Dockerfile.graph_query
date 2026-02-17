@@ -25,4 +25,4 @@ COPY .env.example ./.env.example
 EXPOSE 8003
 
 # Run the graph query MCP server (SSE transport)
-CMD ["python", "-m", "src.agents.graph_query.server"]
+CMD ["uvicorn", "src.agents.graph_query.server:app", "--host", "0.0.0.0", "--port", "8003"]

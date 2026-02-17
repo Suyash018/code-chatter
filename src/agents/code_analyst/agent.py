@@ -91,7 +91,7 @@ class CodeAnalystAgent:
         settings = settings or CodeAnalystSettings()
 
         # Connect via HTTP/SSE to the code_analyst service
-        code_analyst_url = os.getenv("CODE_ANALYST_URL", "http://code_analyst:8004")
+        code_analyst_url = os.getenv("CODE_ANALYST_URL", "http://code_analyst:8004/sse")
         client = MultiServerMCPClient(
             {
                 "code_analyst": {

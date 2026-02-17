@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from src.shared.database import Neo4jHandler
 from src.shared.llms import get_openai_embeddings
@@ -89,7 +90,14 @@ def _job_to_dict(job: Job) -> dict:
 # ─── FastMCP setup ───────────────────────────────────────────
 
 
-mcp = FastMCP("Indexer")
+# Configure transport security to allow Docker service names
+transport_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=False,
+    allowed_hosts=["indexer", "indexer:8002", "localhost", "127.0.0.1", "0.0.0.0"],
+    allowed_origins=["*"],
+)
+
+mcp = FastMCP("Indexer", transport_security=transport_security)
 
 
 # ─── Shared resources (lazy init) ────────────────────────────

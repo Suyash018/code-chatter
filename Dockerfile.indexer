@@ -28,4 +28,4 @@ RUN mkdir -p /app/repos
 EXPOSE 8002
 
 # Run the indexer MCP server (SSE transport)
-CMD ["python", "-m", "src.agents.indexer.server"]
+CMD ["uvicorn", "src.agents.indexer.server:app", "--host", "0.0.0.0", "--port", "8002"]

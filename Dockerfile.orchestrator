@@ -25,4 +25,4 @@ COPY .env.example ./.env.example
 EXPOSE 8001
 
 # Run the orchestrator MCP server (SSE transport)
-CMD ["python", "-m", "src.agents.orchestrator.server"]
+CMD ["uvicorn", "src.agents.orchestrator.server:app", "--host", "0.0.0.0", "--port", "8001"]

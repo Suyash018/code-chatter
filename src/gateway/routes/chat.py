@@ -65,7 +65,29 @@ async def _call_orchestrator_tool(
             )
 
         result = await tool.ainvoke(kwargs)
-        return json.loads(result) if isinstance(result, str) else result
+
+        # Log the result type and content for debugging
+        logger.debug(f"Tool result type: {type(result)}, content: {result}")
+
+        # Handle different result types from MCP tools
+        if isinstance(result, str):
+            return json.loads(result)
+        elif isinstance(result, dict):
+            return result
+        elif isinstance(result, list) and len(result) > 0:
+            # MCP tools sometimes return a list of content blocks
+            # Extract the text content from the first block
+            first_item = result[0]
+            if isinstance(first_item, dict) and "text" in first_item:
+                return json.loads(first_item["text"])
+            elif isinstance(first_item, str):
+                return json.loads(first_item)
+            else:
+                logger.error(f"Unexpected list item format: {first_item}")
+                return result
+        else:
+            logger.error(f"Unexpected result type: {type(result)}")
+            return result
 
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse tool result: {e}")

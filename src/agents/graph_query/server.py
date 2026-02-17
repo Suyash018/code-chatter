@@ -12,6 +12,7 @@ import json
 import logging
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from src.agents.graph_query.config import GraphQuerySettings
 from src.agents.graph_query.graph_store import GraphStore
@@ -21,7 +22,14 @@ logger = setup_logging("graph_query", level="INFO")
 
 # ─── Shared resources (lazy init) ─────────────────────────
 
-mcp = FastMCP("GraphQuery")
+# Configure transport security to allow Docker service names
+transport_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=False,
+    allowed_hosts=["graph_query", "graph_query:8003", "localhost", "127.0.0.1", "0.0.0.0"],
+    allowed_origins=["*"],
+)
+
+mcp = FastMCP("GraphQuery", transport_security=transport_security)
 
 _settings: GraphQuerySettings | None = None
 _store: GraphStore | None = None

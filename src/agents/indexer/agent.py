@@ -107,7 +107,7 @@ class IndexerAgent:
         settings = settings or IndexerSettings()
 
         # Connect via HTTP/SSE to the indexer service
-        indexer_url = os.getenv("INDEXER_URL", "http://indexer:8002")
+        indexer_url = os.getenv("INDEXER_URL", "http://indexer:8002/sse")
         client = MultiServerMCPClient(
             {
                 "indexer": {

@@ -1,36 +1,28 @@
 """
-Orchestrator Agent — LangChain ReAct agent that coordinates all sub-agents.
+Orchestrator Agent — LangChain ReAct agent that connects to the
+Orchestrator MCP server and coordinates all sub-agents.
 
-Unlike the other agents, the orchestrator does NOT connect to its own MCP
-server subprocess.  Instead, it creates its four tools in-process to avoid
-nested-subprocess issues on Windows (MCP stdio pipes conflict when an MCP
-server spawns child MCP servers).
+This is the entry point the FastAPI gateway calls.  It:
 
-The sub-agents (graph_query, code_analyst, indexer) are still each backed
-by their own MCP server subprocesses — but they are spawned from the main
-process via the AgentRouter, which lives here.
+1. Connects to the Orchestrator MCP server via ``MultiServerMCPClient``
+2. Loads the four orchestration tools as LangChain ``BaseTool`` objects
+3. Wraps them in a ``create_react_agent`` loop with a system prompt
+4. Exposes ``invoke(query, session_id)`` → formatted response dict
 
-Tools exposed to the LLM:
-1. analyze_query       — QueryAnalyzer (LLM call, in-process)
-2. get_conversation_context — ContextManager (in-memory, in-process)
-3. route_to_agents     — AgentRouter (spawns sub-agent MCP subprocesses)
-4. synthesize_response — ResponseSynthesizer (LLM call, in-process)
+The Orchestrator MCP server (server.py) owns the sub-agent routing
+internally — when route_to_agents is called, the server spawns MCP
+connections to graph_query, code_analyst, and indexer servers.
 """
 
-import json
 import sys
 from typing import Any
 
 from langchain_core.messages import HumanMessage
-from langchain_core.tools import tool
-from langchain.agents import create_agent
+from langchain_mcp_adapters.client import MultiServerMCPClient
+from langgraph.prebuilt import create_react_agent
 from langgraph.checkpoint.memory import MemorySaver
 
 from src.agents.orchestrator.config import OrchestratorSettings
-from src.agents.orchestrator.context_manager import ContextManager
-from src.agents.orchestrator.query_analyzer import QueryAnalyzer
-from src.agents.orchestrator.router import AgentRouter
-from src.agents.orchestrator.synthesizer import ResponseSynthesizer
 from src.agents.response_formatter.format import ResponseFormatter
 from src.shared.llms.models import get_openai_model
 from src.shared.logging import setup_logging
@@ -90,149 +82,16 @@ are relevant follow-up questions.
 """
 
 
-# ─── Tool factories ──────────────────────────────────────
-
-
-def _build_tools(
-    analyzer: QueryAnalyzer,
-    context_mgr: ContextManager,
-    router: AgentRouter,
-    synthesizer: ResponseSynthesizer,
-) -> list:
-    """Create the four LangChain tools backed by in-process components."""
-
-    @tool
-    async def analyze_query(query: str, session_id: str = "") -> str:
-        """Classify the user's query intent and extract key code entities.
-
-        This should be the FIRST tool you call for every user query.
-        It determines the query intent (what kind of question it is)
-        and identifies code entities mentioned (class names, function names,
-        module names).
-
-        The analysis result tells you:
-        - intent: The type of question (code_explanation, dependency_query, etc.)
-        - entities: Code entities mentioned (e.g. ["FastAPI", "APIRoute"])
-        - requires_graph: Whether a knowledge graph lookup is needed
-        - requires_analysis: Whether code analysis is needed
-        - requires_indexing: Whether indexing operations are needed
-        - confidence: How confident the classification is (0.0 to 1.0)
-
-        Args:
-            query: The user's question about the FastAPI codebase.
-            session_id: Optional session identifier for multi-turn context.
-        """
-        context_summary = ""
-        if session_id:
-            context_summary = context_mgr.get_context_summary(session_id)
-
-        result = await analyzer.analyze(query, context_summary)
-        return json.dumps(result, default=str)
-
-    @tool
-    def get_conversation_context(session_id: str, max_turns: int = 10) -> str:
-        """Retrieve conversation history and context for a session.
-
-        Call this when the query appears to be a follow-up (intent="follow_up"
-        from analyze_query) or when you need to understand what was discussed
-        previously in the conversation.
-
-        Returns turn_count, entities_discussed, recent_turns, last_intent,
-        and last_agents_called.
-
-        Args:
-            session_id: The session identifier to look up.
-            max_turns: Maximum number of recent turns to include (default 10).
-        """
-        result = context_mgr.get_context(session_id, max_turns)
-        return json.dumps(result, default=str)
-
-    @tool
-    async def route_to_agents(
-        query: str,
-        intent: str,
-        entities: str = "[]",
-        session_id: str = "",
-    ) -> str:
-        """Route the query to the appropriate specialist agents and collect results.
-
-        Call this AFTER analyze_query. Pass the intent and entities from the
-        analysis result. This tool calls the right agents in sequence:
-
-        Pipeline by intent:
-        - code_explanation → graph_query → code_analyst
-        - dependency_query → graph_query only
-        - indexing_operation → indexer only
-        - general_question → graph_query → code_analyst
-        (graph_query output feeds into code_analyst as context)
-
-        Args:
-            query: The user's original question.
-            intent: The classified intent from analyze_query.
-            entities: JSON array of entity names from analyze_query.
-            session_id: Optional session identifier for context updates.
-        """
-        try:
-            entity_list = json.loads(entities) if entities else []
-        except json.JSONDecodeError:
-            entity_list = []
-
-        analysis = {"intent": intent, "entities": entity_list}
-        result = await router.route(query, analysis)
-
-        # Update conversation context
-        if session_id:
-            summary_parts = []
-            for agent_name, output in result.get("outputs", {}).items():
-                summary_parts.append(f"{agent_name}: {output[:200]}")
-            context_mgr.update_context(
-                session_id=session_id,
-                query=query,
-                intent=intent,
-                entities=entity_list,
-                agents_called=result.get("agents_called", []),
-                summary=" | ".join(summary_parts),
-            )
-
-        return json.dumps(result, default=str)
-
-    @tool
-    async def synthesize_response(
-        query: str,
-        agent_outputs: str,
-        errors: str = "{}",
-    ) -> str:
-        """Combine outputs from multiple agents into a coherent final response.
-
-        Call this as the LAST step, after route_to_agents has collected results.
-        Pass the agent_outputs and errors from the routing result.
-
-        Args:
-            query: The user's original question.
-            agent_outputs: JSON object mapping agent names to their output text.
-            errors: JSON object mapping agent names to error messages.
-        """
-        try:
-            outputs_dict = json.loads(agent_outputs) if agent_outputs else {}
-        except json.JSONDecodeError:
-            outputs_dict = {}
-
-        try:
-            errors_dict = json.loads(errors) if errors else {}
-        except json.JSONDecodeError:
-            errors_dict = {}
-
-        result = await synthesizer.synthesize(query, outputs_dict, errors_dict)
-        return json.dumps(result, default=str)
-
-    return [analyze_query, get_conversation_context, route_to_agents, synthesize_response]
-
-
 # ─── Agent class ──────────────────────────────────────────
 
 
 class OrchestratorAgent:
-    """LangChain ReAct agent that coordinates sub-agents via local tools.
+    """LangChain ReAct agent backed by the Orchestrator MCP server.
+
+    Connects to the Orchestrator MCP server (server.py) which exposes
+    four tools: analyze_query, get_conversation_context, route_to_agents,
+    and synthesize_response.  The server internally manages sub-agent
+    MCP connections to graph_query, code_analyst, and indexer.
 
     Uses MemorySaver to maintain conversation history across turns
     within the same session_id.
@@ -249,12 +108,12 @@ class OrchestratorAgent:
 
     def __init__(
         self,
+        client: MultiServerMCPClient,
         agent: Any,
-        router: AgentRouter,
         formatter: ResponseFormatter,
     ) -> None:
+        self._client = client
         self._agent = agent
-        self._router = router
         self._formatter = formatter
 
     # ─── Factory ──────────────────────────────────────────
@@ -264,23 +123,27 @@ class OrchestratorAgent:
         cls,
         settings: OrchestratorSettings | None = None,
     ) -> "OrchestratorAgent":
-        """Initialise components and build the agent.
+        """Initialise the MCP client, load tools, and build the agent.
 
         Args:
             settings: Optional settings override.  Falls back to env vars.
         """
         settings = settings or OrchestratorSettings()
 
-        # Create in-process components
-        analyzer = QueryAnalyzer(settings)
-        context_mgr = ContextManager(max_turns=settings.max_context_turns)
-        router = AgentRouter(settings)
-        synthesizer = ResponseSynthesizer(settings)
+        # Connect to the Orchestrator MCP server over stdio
+        client = MultiServerMCPClient(
+            {
+                "orchestrator": {
+                    "command": sys.executable,
+                    "args": ["-m", "src.agents.orchestrator.server"],
+                    "transport": "stdio",
+                },
+            }
+        )
 
-        # Build local tools
-        tools = _build_tools(analyzer, context_mgr, router, synthesizer)
+        tools = await client.get_tools()
         logger.info(
-            "Created %d orchestrator tools: %s",
+            "Loaded %d tools from Orchestrator MCP server: %s",
             len(tools),
             [t.name for t in tools],
         )
@@ -288,17 +151,17 @@ class OrchestratorAgent:
         model = get_openai_model(settings.orchestrator_model)
         checkpointer = MemorySaver()
 
-        agent = create_agent(
+        agent = create_react_agent(
             model,
             tools,
-            system_prompt=SYSTEM_PROMPT,
+            prompt=SYSTEM_PROMPT,
             name="orchestrator_agent",
             checkpointer=checkpointer,
         )
 
         formatter = ResponseFormatter()
 
-        return cls(agent=agent, router=router, formatter=formatter)
+        return cls(client=client, agent=agent, formatter=formatter)
 
     # ─── Invoke ───────────────────────────────────────────
 
@@ -336,12 +199,13 @@ class OrchestratorAgent:
                     break
 
         # Format the response with response + suggestive_pills
-        formatted = self._formatter.format_response(raw_response)
+        formatted = await self._formatter.format_response(raw_response)
         return formatted
 
     # ─── Cleanup ──────────────────────────────────────────
 
     async def close(self) -> None:
-        """Shut down all sub-agent connections."""
-        await self._router.close()
+        """Release the MCP client reference (sessions are per-call, no persistent connection)."""
+        self._client = None
+        self._agent = None
         logger.info("Orchestrator agent shut down")

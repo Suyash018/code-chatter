@@ -12,7 +12,8 @@
       "Bash(python test.py:*)",
       "Bash(python -c:*)",
       "Bash(uv pip install:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(python3:*)"
     ]
   }
 }

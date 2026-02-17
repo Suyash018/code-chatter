@@ -14,9 +14,9 @@ import logging
 import sys
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain.agents import create_agent
+from langgraph.prebuilt import create_react_agent
 
 from src.agents.graph_query.config import GraphQuerySettings
 from src.shared.llms.models import get_openai_model
@@ -137,10 +137,10 @@ class GraphQueryAgent:
 
         model = get_openai_model(settings.query_model)
 
-        agent = create_agent(
+        agent = create_react_agent(
             model,
             tools,
-            system_prompt=SYSTEM_PROMPT,
+            prompt=SYSTEM_PROMPT,
             name="graph_query_agent",
         )
 
@@ -189,5 +189,7 @@ class GraphQueryAgent:
     # ─── Cleanup ──────────────────────────────────────────
 
     async def close(self) -> None:
-        """Tear down the MCP client connection."""
+        """Release the MCP client reference (sessions are per-call, no persistent connection)."""
+        self._client = None
+        self._agent = None
         logger.info("Graph Query agent shut down")

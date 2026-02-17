@@ -14,9 +14,9 @@ import logging
 import sys
 from typing import Any
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain.agents import create_agent
+from langgraph.prebuilt import create_react_agent
 
 from src.agents.code_analyst.config import CodeAnalystSettings
 from src.shared.llms import get_openai_model
@@ -109,10 +109,10 @@ class CodeAnalystAgent:
 
         model = get_openai_model(settings.analysis_model)
 
-        agent = create_agent(
+        agent = create_react_agent(
             model,
             tools,
-            system_prompt=SYSTEM_PROMPT,
+            prompt=SYSTEM_PROMPT,
             name="code_analyst_agent",
         )
 
@@ -146,7 +146,6 @@ class CodeAnalystAgent:
         # Extract the final AI message from the conversation
         messages = result.get("messages", [])
 
-        print("\n\n\n Messages from code analyst agent:\n\n",str(messages),"\n\n\n==============end of messages=============\n\n\n")
         for msg in reversed(messages):
             if hasattr(msg, "content") and msg.content and msg.type == "ai":
                 # Skip messages that are pure tool calls with no text
@@ -158,5 +157,7 @@ class CodeAnalystAgent:
     # ─── Cleanup ──────────────────────────────────────────
 
     async def close(self) -> None:
-        """Tear down the MCP client connection."""
+        """Release the MCP client reference (sessions are per-call, no persistent connection)."""
+        self._client = None
+        self._agent = None
         logger.info("Code Analyst agent shut down")

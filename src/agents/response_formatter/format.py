@@ -39,7 +39,7 @@ class ResponseFormatter:
             | self.model_with_structure
         )
 
-    def format_response(self, response: str) -> dict:
+    async def format_response(self, response: str) -> dict:
         """Response formatter node."""
-        result = self.chain.invoke({"response": response})
+        result = await self.chain.ainvoke({"response": response})
         return result.model_dump()

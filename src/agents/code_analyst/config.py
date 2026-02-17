@@ -9,6 +9,3 @@ class CodeAnalystSettings(BaseAgentSettings):
     agent_name: str = "code_analyst"
     analysis_model: str = "gpt-5.2-2025-12-11"
     max_source_context_lines: int = 200
-
-    class Config:
-        env_prefix = "CODE_ANALYST_"

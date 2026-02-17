@@ -21,6 +21,7 @@ from langgraph.prebuilt import create_react_agent
 from src.agents.graph_query.config import GraphQuerySettings
 from src.shared.llms.models import get_openai_model
 from src.shared.logging import setup_logging
+from src.shared.observability import MCPTraceContextInterceptor, is_langfuse_enabled
 
 logger = setup_logging("graph_query.agent", level="INFO")
 
@@ -127,7 +128,8 @@ class GraphQueryAgent:
                     "url": graph_query_url,
                     "transport": "sse",
                 },
-            }
+            },
+            tool_interceptors=[MCPTraceContextInterceptor()] if is_langfuse_enabled() else [],
         )
 
         tools = await client.get_tools()

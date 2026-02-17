@@ -9,6 +9,7 @@ Run as:  python -m src.agents.orchestrator.server        (stdio transport)
 
 import json
 
+from langfuse import observe
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
@@ -18,6 +19,12 @@ from src.agents.orchestrator.query_analyzer import QueryAnalyzer
 from src.agents.orchestrator.router import AgentRouter
 from src.agents.orchestrator.synthesizer import ResponseSynthesizer
 from src.shared.logging import setup_logging
+from src.shared.observability import (
+    init_langfuse,
+    is_langfuse_enabled,
+    restore_trace_context,
+    shutdown_langfuse,
+)
 
 logger = setup_logging("orchestrator.server", level="INFO")
 
@@ -45,6 +52,15 @@ _analyzer: QueryAnalyzer | None = None
 _router: AgentRouter | None = None
 _context_mgr: ContextManager | None = None
 _synthesizer: ResponseSynthesizer | None = None
+_langfuse_initialized: bool = False
+
+
+def _ensure_langfuse_initialized():
+    """Initialize Langfuse if not already done."""
+    global _langfuse_initialized
+    if not _langfuse_initialized:
+        init_langfuse()
+        _langfuse_initialized = True
 
 
 def _get_settings() -> OrchestratorSettings:
@@ -85,8 +101,9 @@ def _get_synthesizer() -> ResponseSynthesizer:
 # ─── Tool 1: analyze_query ────────────────────────────────
 
 
+@observe(name="orchestrator_analyze_query", as_type="span")
 @mcp.tool()
-async def analyze_query(query: str, session_id: str = "") -> str:
+async def analyze_query(query: str, session_id: str = "", mcp_meta: dict | None = None) -> str:
     """Classify the user's query intent and extract key code entities.
 
     This should be the FIRST tool you call for every user query.
@@ -117,7 +134,13 @@ async def analyze_query(query: str, session_id: str = "") -> str:
         session_id: Optional session identifier for multi-turn context.
                     If provided, conversation history is used to detect
                     follow-up queries and resolve entity references.
+        mcp_meta: MCP metadata field (internal, contains trace context)
     """
+    # Initialize Langfuse and restore trace context if available
+    _ensure_langfuse_initialized()
+    if mcp_meta and "trace_context" in mcp_meta:
+        restore_trace_context(mcp_meta["trace_context"])
+
     context_summary = ""
     if session_id:
         context_summary = _get_context_mgr().get_context_summary(session_id)
@@ -129,12 +152,14 @@ async def analyze_query(query: str, session_id: str = "") -> str:
 # ─── Tool 2: route_to_agents ─────────────────────────────
 
 
+@observe(name="orchestrator_route_to_agents", as_type="span")
 @mcp.tool()
 async def route_to_agents(
     query: str,
     intent: str,
     entities: str = "[]",
     session_id: str = "",
+    mcp_meta: dict | None = None,
 ) -> str:
     """Route the query to the appropriate specialist agents and collect results.
 
@@ -167,7 +192,13 @@ async def route_to_agents(
                   E.g. '["FastAPI", "APIRoute"]'. Default is empty list.
         session_id: Optional session identifier. If provided, conversation
                     context is updated after routing completes.
+        mcp_meta: MCP metadata field (internal, contains trace context)
     """
+    # Initialize Langfuse and restore trace context if available
+    _ensure_langfuse_initialized()
+    if mcp_meta and "trace_context" in mcp_meta:
+        restore_trace_context(mcp_meta["trace_context"])
+
     try:
         entity_list = json.loads(entities) if entities else []
     except json.JSONDecodeError:
@@ -203,10 +234,12 @@ async def route_to_agents(
 # ─── Tool 3: get_conversation_context ────────────────────
 
 
+@observe(name="orchestrator_get_conversation_context", as_type="span")
 @mcp.tool()
 def get_conversation_context(
     session_id: str,
     max_turns: int = 10,
+    mcp_meta: dict | None = None,
 ) -> str:
     """Retrieve conversation history and context for a session.
 
@@ -229,7 +262,13 @@ def get_conversation_context(
     Args:
         session_id: The session identifier to look up.
         max_turns: Maximum number of recent turns to include (default 10).
+        mcp_meta: MCP metadata field (internal, contains trace context)
     """
+    # Initialize Langfuse and restore trace context if available
+    _ensure_langfuse_initialized()
+    if mcp_meta and "trace_context" in mcp_meta:
+        restore_trace_context(mcp_meta["trace_context"])
+
     result = _get_context_mgr().get_context(session_id, max_turns)
     return json.dumps(result, default=str)
 
@@ -237,11 +276,13 @@ def get_conversation_context(
 # ─── Tool 4: synthesize_response ─────────────────────────
 
 
+@observe(name="orchestrator_synthesize_response", as_type="generation")
 @mcp.tool()
 async def synthesize_response(
     query: str,
     agent_outputs: str,
     errors: str = "{}",
+    mcp_meta: dict | None = None,
 ) -> str:
     """Combine outputs from multiple agents into a coherent final response.
 
@@ -263,7 +304,13 @@ async def synthesize_response(
         errors: JSON object mapping agent names to error messages.
                 E.g. '{"indexer": "Timed out after 120s"}'.
                 Default is empty object "{}".
+        mcp_meta: MCP metadata field (internal, contains trace context)
     """
+    # Initialize Langfuse and restore trace context if available
+    _ensure_langfuse_initialized()
+    if mcp_meta and "trace_context" in mcp_meta:
+        restore_trace_context(mcp_meta["trace_context"])
+
     try:
         outputs_dict = json.loads(agent_outputs) if agent_outputs else {}
     except json.JSONDecodeError:

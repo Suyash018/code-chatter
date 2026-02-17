@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langfuse.decorators import observe
+from langfuse import observe
 from pydantic import BaseModel, Field
 
 from src.shared.logging import setup_logging

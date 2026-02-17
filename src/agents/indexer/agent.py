@@ -20,6 +20,7 @@ from langgraph.prebuilt import create_react_agent
 from src.agents.indexer.config import IndexerSettings
 from src.shared.llms.models import get_openai_model
 from src.shared.logging import setup_logging
+from src.shared.observability import MCPTraceContextInterceptor, is_langfuse_enabled
 
 logger = setup_logging("indexer.agent", level="INFO")
 
@@ -114,7 +115,8 @@ class IndexerAgent:
                     "url": indexer_url,
                     "transport": "sse",
                 },
-            }
+            },
+            tool_interceptors=[MCPTraceContextInterceptor()] if is_langfuse_enabled() else [],
         )
 
         tools = await client.get_tools()

@@ -7,11 +7,11 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
-from langfuse.decorators import observe
+from langfuse import observe
 from pydantic import BaseModel, Field
 
 from src.shared.logging import setup_logging
-from src.shared.observability import is_langfuse_enabled
+from src.shared.observability import extract_trace_context, is_langfuse_enabled
 
 logger = setup_logging("gateway.routes.chat", level="INFO")
 

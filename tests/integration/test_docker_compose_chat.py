@@ -505,7 +505,7 @@ class IntegrationTestRunner:
             self.results.append(result)
 
             if success:
-                response_preview = response_data["response"][:150] + "..." if len(response_data["response"]) > 150 else response_data["response"]
+                response_preview =  response_data
                 intent = response_data.get("intent", "unknown")
                 agents = ", ".join(response_data.get("agents_called", []))
                 errors = response_data.get("errors", {})
@@ -519,7 +519,8 @@ class IntegrationTestRunner:
                     print(f"  Intent: {intent} | Agents: {agents}")
                     if errors:
                         print(f"  Errors: {list(errors.keys())}")
-                    print(f"  Response: {response_preview}")
+                    print(f"  Response: {response_preview['response']}")
+                    print(f"  Suggestive pills: {response_preview['suggestive_pills']}")
                     print()
             else:
                 if verbose:

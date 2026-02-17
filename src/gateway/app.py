@@ -17,6 +17,7 @@ from src.gateway.routes import chat, health, index
 from src.shared.logging import setup_logging
 from src.shared.observability import (
     LangfuseMiddleware,
+    MCPTraceContextInterceptor,
     init_langfuse,
     is_langfuse_enabled,
     shutdown_langfuse,
@@ -54,12 +55,16 @@ async def lifespan(app: FastAPI):
     logger.info(f"Connecting to Orchestrator MCP server at {orchestrator_url}")
 
     # Initialize the orchestrator client with HTTP/SSE transport
-    orchestrator_client = MultiServerMCPClient({
-        "orchestrator": {
-            "url": orchestrator_url,
-            "transport": "sse",
-        }
-    })
+    # Add trace context interceptor for linked tracing across MCP boundaries
+    orchestrator_client = MultiServerMCPClient(
+        {
+            "orchestrator": {
+                "url": orchestrator_url,
+                "transport": "sse",
+            }
+        },
+        tool_interceptors=[MCPTraceContextInterceptor()] if is_langfuse_enabled() else [],
+    )
 
     # Store client in app state for route access
     app.state.orchestrator_client = orchestrator_client

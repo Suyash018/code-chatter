@@ -14,6 +14,7 @@ dependencies = [
     "langchain-mcp-adapters>=0.2.1",
     "langchain-neo4j>=0.8.0",
     "langchain-openai>=1.1.9",
+    "langfuse>=3.14.2",
     "langgraph>=1.0.8",
     "pydantic-settings>=2.7.0",
     "python-dotenv>=1.2.1",

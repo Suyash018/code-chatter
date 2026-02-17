@@ -13,6 +13,11 @@ class BaseAgentSettings(BaseSettings):
 
     agent_name: str = "base"
 
+    # Global model defaults (read from DEFAULT_MODEL, etc.)
+    default_model: str = "gpt-5.2-2025-12-11"
+    default_mini_model: str = "gpt-5-mini-2025-08-07"
+    default_embedding_model: str = "text-embedding-3-large"
+
     # Neo4j connection
     neo4j_uri: str = ""
     neo4j_username: str = "neo4j"

@@ -10,15 +10,22 @@ load_dotenv()
 # ─── LLM Model Factories ─────────────────────────────────
 
 
-def get_openai_model(model_name: str = "gpt-5.2-2025-12-11") -> ChatOpenAI:
+def get_openai_model(model_name: str | None = None) -> ChatOpenAI:
     return ChatOpenAI(
-        model=model_name,
+        model=model_name or os.getenv("DEFAULT_MODEL", "gpt-5.2-2025-12-11"),
         api_key=os.getenv("OPENAI_API_KEY"),
     )
 
 
-def get_openai_embeddings() -> OpenAIEmbeddings:
+def get_openai_mini_model(model_name: str | None = None) -> ChatOpenAI:
+    return ChatOpenAI(
+        model=model_name or os.getenv("DEFAULT_MINI_MODEL", "gpt-5-mini-2025-08-07"),
+        api_key=os.getenv("OPENAI_API_KEY"),
+    )
+
+
+def get_openai_embeddings(model_name: str | None = None) -> OpenAIEmbeddings:
     return OpenAIEmbeddings(
-        model="text-embedding-3-large",
+        model=model_name or os.getenv("DEFAULT_EMBEDDING_MODEL", "text-embedding-3-large"),
         api_key=os.getenv("OPENAI_API_KEY"),
     )

@@ -12,10 +12,10 @@ import re
 from typing import Any
 
 from langchain_neo4j import Neo4jGraph
-from langchain_openai import OpenAIEmbeddings
 
 from src.agents.graph_query.config import GraphQuerySettings
 from src.shared.exceptions import GraphQueryError
+from src.shared.llms.models import get_openai_embeddings
 
 logger = logging.getLogger("graph_query.graph_store")
 
@@ -77,10 +77,7 @@ class GraphStore:
             database=settings.neo4j_database,
             refresh_schema=False,
         )
-        self._embeddings = OpenAIEmbeddings(
-            model=settings.embedding_model,
-            api_key=settings.openai_api_key,
-        )
+        self._embeddings = get_openai_embeddings(settings.embedding_model)
         self._settings = settings
 
     # ─── Core helpers ─────────────────────────────────────

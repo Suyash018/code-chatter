@@ -16,10 +16,10 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
 
 from src.agents.graph_query.config import GraphQuerySettings
+from src.shared.llms.models import get_openai_model
 from src.shared.logging import setup_logging
 
 logger = setup_logging("graph_query.agent", level="INFO")
@@ -135,10 +135,7 @@ class GraphQueryAgent:
             [t.name for t in tools],
         )
 
-        model = ChatOpenAI(
-            model=settings.query_model,
-            api_key=settings.openai_api_key,
-        )
+        model = get_openai_model(settings.query_model)
 
         agent = create_agent(
             model,

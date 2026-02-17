@@ -16,10 +16,10 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain_openai import ChatOpenAI
 from langchain.agents import create_agent
 
 from src.agents.code_analyst.config import CodeAnalystSettings
+from src.shared.llms import get_openai_model
 from src.shared.logging import setup_logging
 
 logger = setup_logging("code_analyst.agent", level="INFO")
@@ -107,10 +107,7 @@ class CodeAnalystAgent:
             [t.name for t in tools],
         )
 
-        model = ChatOpenAI(
-            model=settings.analysis_model,
-            api_key=settings.openai_api_key,
-        )
+        model = get_openai_model(settings.analysis_model)
 
         agent = create_agent(
             model,

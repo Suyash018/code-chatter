@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest:*)",
+      "Bash(.venv/Scripts/pip install:*)",
+      "Bash(.venv/Scripts/pip.exe install:*)",
+      "Bash(\"e:/project/graphical rag/.venv/Scripts/python.exe\" -m pip install pytest)",
+      "Bash(\"e:/project/graphical rag/.venv/Scripts/python.exe\":*)",
+      "Bash(\"e:/project/graphical rag/.venv/Scripts/python.exe\" -m tests.test_graph_query.test)",
+      "Bash(cd:*)",
+      "Bash(find:*)",
+      "Bash(python test.py:*)",
+      "Bash(python -c:*)",
+      "Bash(uv pip install:*)",
+      "Bash(python:*)"
+    ]
+  }
+}

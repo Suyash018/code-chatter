@@ -23,14 +23,23 @@ logger = setup_logging("code_analyst", level="INFO")
 
 mcp = FastMCP("CodeAnalyst")
 
+_settings: CodeAnalystSettings | None = None
 _retriever: GraphContextRetriever | None = None
+
+
+def _get_settings() -> CodeAnalystSettings:
+    """Lazy-initialise settings from environment variables."""
+    global _settings
+    if _settings is None:
+        _settings = CodeAnalystSettings()
+    return _settings
 
 
 def _get_retriever() -> GraphContextRetriever:
     """Lazy-initialise the retriever on first tool call."""
     global _retriever
     if _retriever is None:
-        _retriever = GraphContextRetriever(CodeAnalystSettings())
+        _retriever = GraphContextRetriever(_get_settings())
     return _retriever
 
 
@@ -229,10 +238,22 @@ def compare_implementations(
 
 # ─── Entry point ──────────────────────────────────────────
 
+# Create the ASGI app for uvicorn
+app = mcp.sse_app
+
 if __name__ == "__main__":
+    import uvicorn
+
     settings = _get_settings()
     host = getattr(settings, 'host', '0.0.0.0')
     port = getattr(settings, 'port', 8004)
 
     logger.info(f"Starting Code Analyst MCP server (SSE transport on {host}:{port})")
-    mcp.run(transport="sse", host=host, port=port)
+
+    # For SSE transport, use uvicorn with the module path
+    uvicorn.run(
+        "src.agents.code_analyst.server:app",
+        host=host,
+        port=port,
+        log_level="info",
+    )

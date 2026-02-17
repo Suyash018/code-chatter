@@ -95,9 +95,19 @@ mcp = FastMCP("Indexer")
 # ─── Shared resources (lazy init) ────────────────────────────
 
 
+_settings: "IndexerSettings | None" = None
 _handler: Neo4jHandler | None = None
 _gm: Neo4jGraphManager | None = None
 _parser: PythonASTParser | None = None
+
+
+def _get_settings() -> "IndexerSettings":
+    """Lazy-initialise settings from environment variables."""
+    global _settings
+    if _settings is None:
+        from src.agents.indexer.config import IndexerSettings
+        _settings = IndexerSettings()
+    return _settings
 
 
 async def _get_graph_manager() -> Neo4jGraphManager:
@@ -680,11 +690,22 @@ async def get_index_status(
 
 # ─── Entry point ─────────────────────────────────────────────
 
+# Create the ASGI app for uvicorn
+app = mcp.sse_app
 
 if __name__ == "__main__":
+    import uvicorn
+
     settings = _get_settings()
     host = getattr(settings, 'host', '0.0.0.0')
     port = getattr(settings, 'port', 8002)
 
     logger.info(f"Starting Indexer MCP server (SSE transport on {host}:{port})")
-    mcp.run(transport="sse", host=host, port=port)
+
+    # For SSE transport, use uvicorn with the module path
+    uvicorn.run(
+        "src.agents.indexer.server:app",
+        host=host,
+        port=port,
+        log_level="info",
+    )

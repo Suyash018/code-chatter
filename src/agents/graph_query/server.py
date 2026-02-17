@@ -23,14 +23,23 @@ logger = setup_logging("graph_query", level="INFO")
 
 mcp = FastMCP("GraphQuery")
 
+_settings: GraphQuerySettings | None = None
 _store: GraphStore | None = None
+
+
+def _get_settings() -> GraphQuerySettings:
+    """Lazy-initialise settings from environment variables."""
+    global _settings
+    if _settings is None:
+        _settings = GraphQuerySettings()
+    return _settings
 
 
 def _get_store() -> GraphStore:
     """Lazy-initialise the graph store on first tool call."""
     global _store
     if _store is None:
-        _store = GraphStore(GraphQuerySettings())
+        _store = GraphStore(_get_settings())
     return _store
 
 
@@ -291,10 +300,22 @@ def get_subgraph(
 
 # ─── Entry point ──────────────────────────────────────────
 
+# Create the ASGI app for uvicorn
+app = mcp.sse_app
+
 if __name__ == "__main__":
+    import uvicorn
+
     settings = _get_settings()
     host = getattr(settings, 'host', '0.0.0.0')
     port = getattr(settings, 'port', 8003)
 
     logger.info(f"Starting Graph Query MCP server (SSE transport on {host}:{port})")
-    mcp.run(transport="sse", host=host, port=port)
+
+    # For SSE transport, use uvicorn with the module path
+    uvicorn.run(
+        "src.agents.graph_query.server:app",
+        host=host,
+        port=port,
+        log_level="info",
+    )

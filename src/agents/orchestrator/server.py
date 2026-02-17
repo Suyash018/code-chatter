@@ -264,10 +264,22 @@ async def synthesize_response(
 
 # ─── Entry point ──────────────────────────────────────────
 
+# Create the ASGI app for uvicorn
+app = mcp.sse_app
+
 if __name__ == "__main__":
+    import uvicorn
+
     settings = _get_settings()
     host = getattr(settings, 'host', '0.0.0.0')
     port = getattr(settings, 'port', 8001)
 
     logger.info(f"Starting Orchestrator MCP server (SSE transport on {host}:{port})")
-    mcp.run(transport="sse", host=host, port=port)
+
+    # For SSE transport, use uvicorn with the module path
+    uvicorn.run(
+        "src.agents.orchestrator.server:app",
+        host=host,
+        port=port,
+        log_level="info",
+    )

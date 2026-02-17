@@ -44,26 +44,35 @@ class AgentRouter:
 
     async def _get_graph_query_agent(self):
         if self._graph_query_agent is None:
+            logger.info("Initializing GraphQueryAgent (first use)...")
             from src.agents.graph_query.agent import GraphQueryAgent
 
             self._graph_query_agent = await GraphQueryAgent.create()
-            logger.info("Initialized GraphQueryAgent")
+            logger.info("GraphQueryAgent initialized successfully")
+        else:
+            logger.debug("Reusing existing GraphQueryAgent instance")
         return self._graph_query_agent
 
     async def _get_code_analyst_agent(self):
         if self._code_analyst_agent is None:
+            logger.info("Initializing CodeAnalystAgent (first use)...")
             from src.agents.code_analyst.agent import CodeAnalystAgent
 
             self._code_analyst_agent = await CodeAnalystAgent.create()
-            logger.info("Initialized CodeAnalystAgent")
+            logger.info("CodeAnalystAgent initialized successfully")
+        else:
+            logger.debug("Reusing existing CodeAnalystAgent instance")
         return self._code_analyst_agent
 
     async def _get_indexer_agent(self):
         if self._indexer_agent is None:
+            logger.info("Initializing IndexerAgent (first use)...")
             from src.agents.indexer.agent import IndexerAgent
 
             self._indexer_agent = await IndexerAgent.create()
-            logger.info("Initialized IndexerAgent")
+            logger.info("IndexerAgent initialized successfully")
+        else:
+            logger.debug("Reusing existing IndexerAgent instance")
         return self._indexer_agent
 
     # ─── Individual agent calls ───────────────────────────
@@ -71,18 +80,30 @@ class AgentRouter:
     async def _call_graph_query(
         self, query: str, entities: list[str],
     ) -> str:
+        logger.info("Calling GraphQueryAgent with %d entities: %s", len(entities), entities)
         agent = await self._get_graph_query_agent()
-        return await agent.invoke(query, entities=entities)
+        result = await agent.invoke(query, entities=entities)
+        logger.info("GraphQueryAgent returned %d characters", len(result))
+        logger.debug("GraphQueryAgent result preview: %s...", result[:200])
+        return result
 
     async def _call_code_analyst(
         self, query: str, context: str = "",
     ) -> str:
+        logger.info("Calling CodeAnalystAgent with %d characters of context", len(context))
         agent = await self._get_code_analyst_agent()
-        return await agent.invoke(query, context=context)
+        result = await agent.invoke(query, context=context)
+        logger.info("CodeAnalystAgent returned %d characters", len(result))
+        logger.debug("CodeAnalystAgent result preview: %s...", result[:200])
+        return result
 
     async def _call_indexer(self, query: str) -> str:
+        logger.info("Calling IndexerAgent")
         agent = await self._get_indexer_agent()
-        return await agent.invoke(query)
+        result = await agent.invoke(query)
+        logger.info("IndexerAgent returned %d characters", len(result))
+        logger.debug("IndexerAgent result preview: %s...", result[:200])
+        return result
 
     async def _call_agent_with_retry(
         self,
@@ -95,15 +116,17 @@ class AgentRouter:
         timeout = self._settings.agent_timeout_seconds
         max_retries = self._settings.max_agent_retries
 
+        logger.info("Calling %s with timeout=%ds, max_retries=%d", agent_name, timeout, max_retries)
         last_error = None
         for attempt in range(1, max_retries + 1):
+            logger.debug("%s attempt %d/%d starting...", agent_name, attempt, max_retries)
             try:
                 result = await asyncio.wait_for(
                     call_fn(*args, **kwargs),
                     timeout=timeout,
                 )
                 logger.info(
-                    "%s completed on attempt %d", agent_name, attempt,
+                    "%s completed successfully on attempt %d", agent_name, attempt,
                 )
                 return result
             except asyncio.TimeoutError:
@@ -114,12 +137,15 @@ class AgentRouter:
                 )
             except Exception as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
-                logger.warning(
+                logger.error(
                     "%s attempt %d/%d failed: %s",
                     agent_name, attempt, max_retries, last_error,
+                    exc_info=True,
                 )
 
-        raise RuntimeError(f"{agent_name} failed after {max_retries} attempts: {last_error}")
+        error_msg = f"{agent_name} failed after {max_retries} attempts: {last_error}"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
 
     # ─── Main routing logic ───────────────────────────────
 
@@ -147,12 +173,16 @@ class AgentRouter:
         entities = analysis.get("entities", [])
         pipeline = ROUTING_MAP.get(intent, ["graph_query", "code_analyst"])
 
+        logger.info("AgentRouter.route starting - intent=%s, entities=%s", intent, entities)
+        logger.info("Pipeline for intent '%s': %s", intent, pipeline)
+
         outputs: dict[str, str] = {}
         errors: dict[str, str] = {}
         agents_called: list[str] = []
         graph_context = ""
 
-        for agent_name in pipeline:
+        for idx, agent_name in enumerate(pipeline, 1):
+            logger.info("Pipeline step %d/%d: calling %s", idx, len(pipeline), agent_name)
             agents_called.append(agent_name)
             try:
                 if agent_name == "graph_query":
@@ -163,15 +193,18 @@ class AgentRouter:
                     )
                     outputs["graph_query"] = result
                     graph_context = result
+                    logger.info("Pipeline step %d/%d: graph_query completed successfully", idx, len(pipeline))
 
                 elif agent_name == "code_analyst":
                     # Feed graph_query output as context
+                    logger.info("Passing %d chars of graph context to code_analyst", len(graph_context))
                     result = await self._call_agent_with_retry(
                         "code_analyst",
                         self._call_code_analyst,
                         query, graph_context,
                     )
                     outputs["code_analyst"] = result
+                    logger.info("Pipeline step %d/%d: code_analyst completed successfully", idx, len(pipeline))
 
                 elif agent_name == "indexer":
                     result = await self._call_agent_with_retry(
@@ -180,10 +213,12 @@ class AgentRouter:
                         query,
                     )
                     outputs["indexer"] = result
+                    logger.info("Pipeline step %d/%d: indexer completed successfully", idx, len(pipeline))
 
             except RuntimeError as exc:
                 errors[agent_name] = str(exc)
-                logger.error("Agent %s failed: %s", agent_name, exc)
+                logger.error("Pipeline step %d/%d: %s failed - %s", idx, len(pipeline), agent_name, exc)
+                logger.info("Continuing pipeline with partial results...")
 
         logger.info(
             "Routing complete: pipeline=%s, success=%s, errors=%s",

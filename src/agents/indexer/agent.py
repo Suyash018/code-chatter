@@ -105,10 +105,13 @@ class IndexerAgent:
             settings: Optional settings override.  Falls back to env vars.
         """
         import os
+        logger.info("Creating IndexerAgent...")
         settings = settings or IndexerSettings()
+        logger.debug("Using model: %s", settings.enrichment_model)
 
         # Connect via HTTP/SSE to the indexer service
         indexer_url = os.getenv("INDEXER_URL", "http://indexer:8002/sse")
+        logger.info("Connecting to Indexer MCP server at %s...", indexer_url)
         client = MultiServerMCPClient(
             {
                 "indexer": {
@@ -119,6 +122,7 @@ class IndexerAgent:
             tool_interceptors=[MCPTraceContextInterceptor()] if is_langfuse_enabled() else [],
         )
 
+        logger.info("Loading tools from Indexer MCP server...")
         tools = await client.get_tools()
         logger.info(
             "Loaded %d tools from Indexer MCP server: %s",
@@ -126,6 +130,7 @@ class IndexerAgent:
             [t.name for t in tools],
         )
 
+        logger.info("Initializing LLM model and creating ReAct agent...")
         model = get_openai_model(settings.enrichment_model)
 
         agent = create_react_agent(
@@ -135,6 +140,7 @@ class IndexerAgent:
             name="indexer_agent",
         )
 
+        logger.info("IndexerAgent created successfully")
         return cls(client=client, agent=agent)
 
     # ─── Invoke ───────────────────────────────────────────
@@ -150,16 +156,24 @@ class IndexerAgent:
         Returns:
             A summary string with the operation results.
         """
+        logger.info("IndexerAgent.invoke called")
+        logger.debug("Instruction: %s", instruction)
+
+        logger.info("Invoking ReAct agent...")
         result = await self._agent.ainvoke(
             {"messages": [HumanMessage(content=instruction)]},
         )
 
+        logger.debug("Agent returned %d messages", len(result.get("messages", [])))
         messages = result.get("messages", [])
         for msg in reversed(messages):
             if hasattr(msg, "content") and msg.content and msg.type == "ai":
                 if not getattr(msg, "tool_calls", None) or msg.content:
+                    logger.info("IndexerAgent.invoke completed successfully (%d chars)", len(msg.content))
+                    logger.debug("Response preview: %s...", msg.content[:200])
                     return msg.content
 
+        logger.warning("No indexing result could be produced for this instruction")
         return "No indexing result could be produced for this instruction."
 
     # ─── Cleanup ──────────────────────────────────────────

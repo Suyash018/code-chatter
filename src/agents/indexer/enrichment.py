@@ -67,12 +67,15 @@ class LLMEnricher:
         Returns:
             Structured enrichment dict.
         """
+        qname = entity.get('qualified_name', '?')
+        logger.info("Enriching %s: %s", entity_type, qname)
         context = context or {}
         prompt = build_enrichment_prompt(entity, entity_type, context)
 
         for attempt in range(self._max_retries):
             try:
                 result = await self._call_structured(prompt, entity_type)
+                logger.info("Successfully enriched %s: %s", entity_type, qname)
                 return result.model_dump()
             except Exception as e:
                 logger.warning(

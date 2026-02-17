@@ -73,12 +73,14 @@ class RepositoryManager:
 
             def _fetch_and_reset():
                 repo.remotes.origin.fetch()
+                logger.info("Checked out branch %s and reset to origin", branch)
                 repo.git.checkout(branch)
                 repo.git.reset("--hard", f"origin/{branch}")
 
             await asyncio.to_thread(_fetch_and_reset)
+            logger.info("Repository updated successfully")
         else:
-            logger.info("Cloning %s to %s...", repo_url, repo_path)
+            logger.info("Cloning %s (branch: %s) to %s...", repo_url, branch, repo_path)
             await asyncio.to_thread(
                 git.Repo.clone_from,
                 repo_url,
@@ -86,6 +88,7 @@ class RepositoryManager:
                 branch=branch,
                 multi_options=["--single-branch"],
             )
+            logger.info("Repository cloned successfully")
 
         return repo_path
 

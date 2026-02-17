@@ -66,35 +66,45 @@ def _ensure_langfuse_initialized():
 def _get_settings() -> OrchestratorSettings:
     global _settings
     if _settings is None:
+        logger.info("Initializing OrchestratorSettings from environment...")
         _settings = OrchestratorSettings()
+        logger.info("OrchestratorSettings initialized")
     return _settings
 
 
 def _get_analyzer() -> QueryAnalyzer:
     global _analyzer
     if _analyzer is None:
+        logger.info("Initializing QueryAnalyzer (first use)...")
         _analyzer = QueryAnalyzer(_get_settings())
+        logger.info("QueryAnalyzer initialized")
     return _analyzer
 
 
 def _get_router() -> AgentRouter:
     global _router
     if _router is None:
+        logger.info("Initializing AgentRouter (first use)...")
         _router = AgentRouter(_get_settings())
+        logger.info("AgentRouter initialized")
     return _router
 
 
 def _get_context_mgr() -> ContextManager:
     global _context_mgr
     if _context_mgr is None:
+        logger.info("Initializing ContextManager (first use)...")
         _context_mgr = ContextManager(max_turns=_get_settings().max_context_turns)
+        logger.info("ContextManager initialized")
     return _context_mgr
 
 
 def _get_synthesizer() -> ResponseSynthesizer:
     global _synthesizer
     if _synthesizer is None:
+        logger.info("Initializing ResponseSynthesizer (first use)...")
         _synthesizer = ResponseSynthesizer(_get_settings())
+        logger.info("ResponseSynthesizer initialized")
     return _synthesizer
 
 
@@ -141,12 +151,18 @@ async def analyze_query(query: str, session_id: str = "", mcp_meta: dict | None 
     if mcp_meta and "trace_context" in mcp_meta:
         restore_trace_context(mcp_meta["trace_context"])
 
+    logger.info("[analyze_query] INPUT  query=%r, session_id=%r", query, session_id)
+
     context_summary = ""
     if session_id:
         context_summary = _get_context_mgr().get_context_summary(session_id)
+        logger.debug("[analyze_query] Retrieved context summary: %d chars", len(context_summary))
 
     result = await _get_analyzer().analyze(query, context_summary)
-    return json.dumps(result, default=str)
+    output = json.dumps(result, default=str)
+    logger.info("[analyze_query] OUTPUT intent=%s, entities=%s, confidence=%.2f",
+               result.get("intent"), result.get("entities"), result.get("confidence", 0.0))
+    return output
 
 
 # ─── Tool 2: route_to_agents ─────────────────────────────
@@ -199,9 +215,13 @@ async def route_to_agents(
     if mcp_meta and "trace_context" in mcp_meta:
         restore_trace_context(mcp_meta["trace_context"])
 
+    logger.info("[route_to_agents] INPUT  query=%r, intent=%s, entities=%r, session_id=%r",
+               query, intent, entities, session_id)
+
     try:
         entity_list = json.loads(entities) if entities else []
     except json.JSONDecodeError:
+        logger.warning("[route_to_agents] Failed to parse entities JSON, using empty list")
         entity_list = []
 
     analysis = {
@@ -210,9 +230,12 @@ async def route_to_agents(
     }
 
     result = await _get_router().route(query, analysis)
+    logger.info("[route_to_agents] Routing completed - agents_called=%s, had_errors=%s",
+               result.get("agents_called"), bool(result.get("errors")))
 
     # Update conversation context if session_id provided
     if session_id:
+        logger.debug("[route_to_agents] Updating conversation context for session %s", session_id)
         # Build a brief summary from outputs
         summary_parts = []
         for agent_name, output in result.get("outputs", {}).items():
@@ -228,7 +251,9 @@ async def route_to_agents(
             summary=summary,
         )
 
-    return json.dumps(result, default=str)
+    output = json.dumps(result, default=str)
+    logger.info("[route_to_agents] OUTPUT %d characters", len(output))
+    return output
 
 
 # ─── Tool 3: get_conversation_context ────────────────────
@@ -269,8 +294,12 @@ def get_conversation_context(
     if mcp_meta and "trace_context" in mcp_meta:
         restore_trace_context(mcp_meta["trace_context"])
 
+    logger.info("[get_conversation_context] INPUT  session_id=%r, max_turns=%d", session_id, max_turns)
     result = _get_context_mgr().get_context(session_id, max_turns)
-    return json.dumps(result, default=str)
+    output = json.dumps(result, default=str)
+    logger.info("[get_conversation_context] OUTPUT turn_count=%d, %d characters",
+               result.get("turn_count", 0), len(output))
+    return output
 
 
 # ─── Tool 4: synthesize_response ─────────────────────────
@@ -311,18 +340,28 @@ async def synthesize_response(
     if mcp_meta and "trace_context" in mcp_meta:
         restore_trace_context(mcp_meta["trace_context"])
 
+    logger.info("[synthesize_response] INPUT  query=%r", query)
+
     try:
         outputs_dict = json.loads(agent_outputs) if agent_outputs else {}
     except json.JSONDecodeError:
+        logger.warning("[synthesize_response] Failed to parse agent_outputs JSON, using empty dict")
         outputs_dict = {}
 
     try:
         errors_dict = json.loads(errors) if errors else {}
     except json.JSONDecodeError:
+        logger.warning("[synthesize_response] Failed to parse errors JSON, using empty dict")
         errors_dict = {}
 
+    logger.info("[synthesize_response] Synthesizing %d agent outputs with %d errors",
+               len(outputs_dict), len(errors_dict))
+
     result = await _get_synthesizer().synthesize(query, outputs_dict, errors_dict)
-    return json.dumps(result, default=str)
+    output = json.dumps(result, default=str)
+    logger.info("[synthesize_response] OUTPUT %d characters, had_errors=%s",
+               len(output), result.get("had_errors", False))
+    return output
 
 
 # ─── Entry point ──────────────────────────────────────────

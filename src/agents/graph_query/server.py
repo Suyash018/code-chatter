@@ -39,7 +39,9 @@ def _get_settings() -> GraphQuerySettings:
     """Lazy-initialise settings from environment variables."""
     global _settings
     if _settings is None:
+        logger.info("Initializing GraphQuerySettings from environment...")
         _settings = GraphQuerySettings()
+        logger.info("GraphQuerySettings initialized")
     return _settings
 
 
@@ -47,7 +49,9 @@ def _get_store() -> GraphStore:
     """Lazy-initialise the graph store on first tool call."""
     global _store
     if _store is None:
+        logger.info("Initializing GraphStore (first tool call)...")
         _store = GraphStore(_get_settings())
+        logger.info("GraphStore initialized successfully")
     return _store
 
 
@@ -88,10 +92,19 @@ def find_entity(
         include_source: Include full source code (can be large).
         limit: Maximum number of results to return.
     """
-    result = _get_store().find_entity(
-        name, entity_type, search_mode, include_source, limit,
-    )
-    return json.dumps(result, default=str)
+    logger.info("[find_entity] INPUT  name=%r, entity_type=%s, search_mode=%s, include_source=%s, limit=%d",
+               name, entity_type, search_mode, include_source, limit)
+    try:
+        result = _get_store().find_entity(
+            name, entity_type, search_mode, include_source, limit,
+        )
+        output = json.dumps(result, default=str)
+        logger.info("[find_entity] OUTPUT %d characters, results_count=%d", len(output), len(result))
+        logger.debug("[find_entity] Result preview: %s...", output[:200])
+        return output
+    except Exception as exc:
+        logger.error("[find_entity] FAILED: %s", exc, exc_info=True)
+        raise
 
 
 # ─── Tool 2 ──────────────────────────────────────────────
@@ -126,10 +139,20 @@ def get_dependencies(
         depth: Traversal hops (1 = direct, 2+ = transitive).
         include_source: Include source code of dependency targets.
     """
-    result = _get_store().get_dependencies(
-        qualified_name, relationship_types, depth, include_source,
-    )
-    return json.dumps(result, default=str)
+    logger.info("[get_dependencies] INPUT  qualified_name=%r, relationship_types=%r, depth=%d, include_source=%s",
+               qualified_name, relationship_types, depth, include_source)
+    try:
+        result = _get_store().get_dependencies(
+            qualified_name, relationship_types, depth, include_source,
+        )
+        output = json.dumps(result, default=str)
+        logger.info("[get_dependencies] OUTPUT %d characters, dependencies_count=%d",
+                   len(output), len(result.get("dependencies", [])))
+        logger.debug("[get_dependencies] Result preview: %s...", output[:200])
+        return output
+    except Exception as exc:
+        logger.error("[get_dependencies] FAILED: %s", exc, exc_info=True)
+        raise
 
 
 # ─── Tool 3 ──────────────────────────────────────────────
@@ -159,10 +182,20 @@ def get_dependents(
         depth: Reverse traversal hops.
         include_source: Include source code of dependent entities.
     """
-    result = _get_store().get_dependents(
-        qualified_name, relationship_types, depth, include_source,
-    )
-    return json.dumps(result, default=str)
+    logger.info("[get_dependents] INPUT  qualified_name=%r, relationship_types=%r, depth=%d, include_source=%s",
+               qualified_name, relationship_types, depth, include_source)
+    try:
+        result = _get_store().get_dependents(
+            qualified_name, relationship_types, depth, include_source,
+        )
+        output = json.dumps(result, default=str)
+        logger.info("[get_dependents] OUTPUT %d characters, dependents_count=%d",
+                   len(output), len(result.get("dependents", [])))
+        logger.debug("[get_dependents] Result preview: %s...", output[:200])
+        return output
+    except Exception as exc:
+        logger.error("[get_dependents] FAILED: %s", exc, exc_info=True)
+        raise
 
 
 # ─── Tool 4 ──────────────────────────────────────────────
@@ -194,10 +227,21 @@ def trace_imports(
         include_names: Include the specific symbol names imported
               at each edge (e.g. ["APIRoute", "Request"]).
     """
-    result = _get_store().trace_imports(
-        module_name, direction, depth, include_names,
-    )
-    return json.dumps(result, default=str)
+    logger.info("[trace_imports] INPUT  module_name=%r, direction=%s, depth=%d, include_names=%s",
+               module_name, direction, depth, include_names)
+    try:
+        result = _get_store().trace_imports(
+            module_name, direction, depth, include_names,
+        )
+        output = json.dumps(result, default=str)
+        imports_count = len(result.get("imports", [])) + len(result.get("imported_by", []))
+        logger.info("[trace_imports] OUTPUT %d characters, chain_length=%d",
+                   len(output), imports_count)
+        logger.debug("[trace_imports] Result preview: %s...", output[:200])
+        return output
+    except Exception as exc:
+        logger.error("[trace_imports] FAILED: %s", exc, exc_info=True)
+        raise
 
 
 # ─── Tool 5 ──────────────────────────────────────────────
@@ -230,10 +274,20 @@ def find_related(
               ClassAttribute, DesignPattern, DomainConcept.  Empty = any.
         limit: Maximum results.
     """
-    result = _get_store().find_related(
-        entity_name, relationship_type, direction, target_type, limit,
-    )
-    return json.dumps(result, default=str)
+    logger.info("[find_related] INPUT  entity_name=%r, relationship_type=%s, direction=%s, target_type=%s, limit=%d",
+               entity_name, relationship_type, direction, target_type, limit)
+    try:
+        result = _get_store().find_related(
+            entity_name, relationship_type, direction, target_type, limit,
+        )
+        output = json.dumps(result, default=str)
+        logger.info("[find_related] OUTPUT %d characters, related_count=%d",
+                   len(output), len(result.get("related", [])))
+        logger.debug("[find_related] Result preview: %s...", output[:200])
+        return output
+    except Exception as exc:
+        logger.error("[find_related] FAILED: %s", exc, exc_info=True)
+        raise
 
 
 # ─── Tool 6 ──────────────────────────────────────────────
@@ -264,9 +318,18 @@ def execute_query(
         params: JSON-encoded dict of query parameters.
               E.g. '{"name": "FastAPI", "depth": 2}'.
     """
-    parsed_params = json.loads(params) if params else {}
-    result = _get_store().execute_query(cypher, parsed_params)
-    return json.dumps(result, default=str)
+    logger.info("[execute_query] INPUT  cypher=%r, params=%r", cypher[:100], params)
+    try:
+        parsed_params = json.loads(params) if params else {}
+        result = _get_store().execute_query(cypher, parsed_params)
+        output = json.dumps(result, default=str)
+        logger.info("[execute_query] OUTPUT %d characters, results_count=%d",
+                   len(output), len(result.get("records", [])))
+        logger.debug("[execute_query] Result preview: %s...", output[:200])
+        return output
+    except Exception as exc:
+        logger.error("[execute_query] FAILED: %s", exc, exc_info=True)
+        raise
 
 
 # ─── Tool 7 ──────────────────────────────────────────────
@@ -302,8 +365,18 @@ def get_subgraph(
         include_source: Include source code for each entity in the slice.
     """
     names = [n.strip() for n in entity_names.split(",") if n.strip()]
-    result = _get_store().get_subgraph(names, hops, include_source)
-    return json.dumps(result, default=str)
+    logger.info("[get_subgraph] INPUT  entity_names=%r (count=%d), hops=%d, include_source=%s",
+               names, len(names), hops, include_source)
+    try:
+        result = _get_store().get_subgraph(names, hops, include_source)
+        output = json.dumps(result, default=str)
+        logger.info("[get_subgraph] OUTPUT %d characters, nodes=%d, edges=%d",
+                   len(output), len(result.get("nodes", [])), len(result.get("edges", [])))
+        logger.debug("[get_subgraph] Result preview: %s...", output[:200])
+        return output
+    except Exception as exc:
+        logger.error("[get_subgraph] FAILED: %s", exc, exc_info=True)
+        raise
 
 
 # ─── Entry point ──────────────────────────────────────────

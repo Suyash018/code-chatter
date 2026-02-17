@@ -116,7 +116,7 @@ async def root():
             "chat": "/api/chat",
             "websocket": "/ws/chat",
             "index": "/api/index",
-            "health": "/api/agents/health",
+            "health": "/api/health",
             "statistics": "/api/graph/statistics",
         }
     }

@@ -36,7 +36,7 @@ class GraphContextRetriever:
         """Execute a Cypher query via Neo4jGraph."""
         return self._graph.query(cypher, params or {})
 
-    def resolve_entity(self, name: str) -> dict[str, Any]:
+    def resolve_entity(self, name: str) -> dict[str, Any] | None:
         """Find a Function or Class node by qualified_name or name.
 
         Resolution order:
@@ -44,7 +44,7 @@ class GraphContextRetriever:
           2. Exact name match (Function, then Class)
           3. Case-insensitive name match as fallback
 
-        Raises ``CodeAnalystError`` when nothing is found.
+        Returns None when nothing is found.
         """
         # 1. Exact qualified_name
         for label in ("Function", "Class"):
@@ -76,7 +76,7 @@ class GraphContextRetriever:
             if rows:
                 return rows[0]["entity"]
 
-        raise CodeAnalystError(f"Entity not found: '{name}'")
+        return None
 
     def _get_file_path(self, qualified_name: str) -> str | None:
         """Return the file path containing this entity."""
@@ -111,6 +111,12 @@ class GraphContextRetriever:
         domain concepts, and file/class location.
         """
         entity = self.resolve_entity(name)
+        if entity is None:
+            return {
+                "found": False,
+                "error": f"Function not found: '{name}'",
+                "message": "This entity does not exist in the knowledge graph. It may be from an external library or not yet indexed."
+            }
         qname = entity["qualified_name"]
 
         result: dict[str, Any] = {
@@ -199,6 +205,9 @@ class GraphContextRetriever:
         result["file_path"] = self._get_file_path(qname)
         result["parent_class"] = self._get_parent_class(qname)
 
+        # Success indicator
+        result["found"] = True
+
         return result
 
     # ─── Tool 2: analyze_class ────────────────────────────
@@ -216,6 +225,12 @@ class GraphContextRetriever:
         decorators, inheritance chain, collaborators, patterns, and location.
         """
         entity = self.resolve_entity(name)
+        if entity is None:
+            return {
+                "found": False,
+                "error": f"Class not found: '{name}'",
+                "message": "This entity does not exist in the knowledge graph. It may be from an external library or not yet indexed."
+            }
         if entity.get("_label") != "Class":
             # If we resolved a function, try to find a class with this name
             rows = self._query(
@@ -224,7 +239,11 @@ class GraphContextRetriever:
                 {"name": name},
             )
             if not rows:
-                raise CodeAnalystError(f"Class not found: '{name}'")
+                return {
+                    "found": False,
+                    "error": f"Class not found: '{name}'",
+                    "message": f"Found a function named '{name}', but no class with that name exists."
+                }
             entity = rows[0]["entity"]
 
         qname = entity["qualified_name"]
@@ -324,6 +343,9 @@ class GraphContextRetriever:
         # Location
         result["file_path"] = self._get_file_path(qname)
 
+        # Success indicator
+        result["found"] = True
+
         return result
 
     # ─── Tool 3: find_patterns ────────────────────────────
@@ -417,6 +439,12 @@ class GraphContextRetriever:
         source code of related entities within *neighborhood* hops.
         """
         entity = self.resolve_entity(name)
+        if entity is None:
+            return {
+                "found": False,
+                "error": f"Entity not found: '{name}'",
+                "message": "This entity does not exist in the knowledge graph. It may be from an external library or not yet indexed."
+            }
         qname = entity["qualified_name"]
         label = entity.get("_label", "Function")
 
@@ -479,6 +507,9 @@ class GraphContextRetriever:
         else:
             result["imports"] = []
 
+        # Success indicator
+        result["found"] = True
+
         return result
 
     # ─── Tool 5: explain_implementation ───────────────────
@@ -496,6 +527,12 @@ class GraphContextRetriever:
         entities (data flow) and called functions (execution chain).
         """
         entity = self.resolve_entity(name)
+        if entity is None:
+            return {
+                "found": False,
+                "error": f"Entity not found: '{name}'",
+                "message": "This entity does not exist in the knowledge graph. It may be from an external library or not yet indexed."
+            }
         qname = entity["qualified_name"]
 
         result: dict[str, Any] = {
@@ -559,6 +596,9 @@ class GraphContextRetriever:
         result["file_path"] = self._get_file_path(qname)
         result["parent_class"] = self._get_parent_class(qname)
 
+        # Success indicator
+        result["found"] = True
+
         return result
 
     # ─── Tool 6: compare_implementations ──────────────────
@@ -591,6 +631,12 @@ class GraphContextRetriever:
     ) -> dict[str, Any]:
         """Build a comparison profile for a single entity."""
         entity = self.resolve_entity(name)
+        if entity is None:
+            return {
+                "found": False,
+                "error": f"Entity not found: '{name}'",
+                "message": "This entity does not exist in the knowledge graph. It may be from an external library or not yet indexed."
+            }
         qname = entity["qualified_name"]
         label = entity.get("_label", "Function")
 
@@ -672,5 +718,8 @@ class GraphContextRetriever:
                 )
 
         profile["file_path"] = self._get_file_path(qname)
+
+        # Success indicator
+        profile["found"] = True
 
         return profile

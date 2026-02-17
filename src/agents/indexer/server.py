@@ -67,6 +67,7 @@ def _create_job(tool_name: str) -> Job:
         created_at=datetime.now(timezone.utc).isoformat(),
     )
     _jobs[job.job_id] = job
+    logger.info("[JOB_CREATED] job_id=%s, tool_name=%s", job.job_id, tool_name)
     return job
 
 
@@ -113,8 +114,10 @@ def _get_settings() -> "IndexerSettings":
     """Lazy-initialise settings from environment variables."""
     global _settings
     if _settings is None:
+        logger.info("Initializing IndexerSettings from environment...")
         from src.agents.indexer.config import IndexerSettings
         _settings = IndexerSettings()
+        logger.info("IndexerSettings initialized")
     return _settings
 
 
@@ -122,10 +125,13 @@ async def _get_graph_manager() -> Neo4jGraphManager:
     """Lazy-initialise the Neo4j handler and graph manager on first use."""
     global _handler, _gm
     if _gm is None:
+        logger.info("Initializing Neo4jGraphManager (first use)...")
         _handler = Neo4jHandler()
         await _handler.connect()
+        logger.info("Neo4jHandler connected")
         _gm = Neo4jGraphManager(_handler)
         await _gm.ensure_schema()
+        logger.info("Neo4jGraphManager initialized and schema ensured")
     return _gm
 
 
@@ -133,7 +139,9 @@ def _get_parser() -> PythonASTParser:
     """Lazy-initialise the AST parser."""
     global _parser
     if _parser is None:
+        logger.info("Initializing PythonASTParser...")
         _parser = PythonASTParser()
+        logger.info("PythonASTParser initialized")
     return _parser
 
 
@@ -547,13 +555,17 @@ async def index_repository(
             Default is False.
         max_workers: Maximum concurrent file processing tasks.
     """
+    logger.info("[index_repository] INPUT  repo_url=%r, branch=%s, skip_enrichment=%s, clear_graph=%s, max_workers=%d",
+               repo_url, branch, skip_enrichment, clear_graph, max_workers)
     job = _create_job("index_repository")
     asyncio.create_task(
         _run_index_repository_job(
             job, repo_url, branch, skip_enrichment, clear_graph, max_workers,
         )
     )
-    return json.dumps({"job_id": job.job_id, "status": "pending"})
+    result = json.dumps({"job_id": job.job_id, "status": "pending"})
+    logger.info("[index_repository] OUTPUT job_id=%s, status=pending", job.job_id)
+    return result
 
 
 # ─── MCP Tool 2 ─────────────────────────────────────────────
@@ -585,11 +597,15 @@ async def index_file(
         skip_enrichment: Skip LLM enrichment for changed entities.
             Default is False.
     """
+    logger.info("[index_file] INPUT  file_path=%r, has_source_code=%s, skip_enrichment=%s",
+               file_path, bool(source_code), skip_enrichment)
     job = _create_job("index_file")
     asyncio.create_task(
         _run_index_file_job(job, file_path, source_code, skip_enrichment)
     )
-    return json.dumps({"job_id": job.job_id, "status": "pending"})
+    result = json.dumps({"job_id": job.job_id, "status": "pending"})
+    logger.info("[index_file] OUTPUT job_id=%s, status=pending", job.job_id)
+    return result
 
 
 # ─── MCP Tool 3 ─────────────────────────────────────────────
@@ -614,9 +630,13 @@ async def parse_python_ast(
         file_path: Virtual file path used for generating qualified names
             (e.g. "fastapi/routing.py" produces module "fastapi.routing").
     """
+    logger.info("[parse_python_ast] INPUT  file_path=%r, source_code_length=%d",
+               file_path, len(source_code))
     job = _create_job("parse_python_ast")
     asyncio.create_task(_run_parse_ast_job(job, source_code, file_path))
-    return json.dumps({"job_id": job.job_id, "status": "pending"})
+    result = json.dumps({"job_id": job.job_id, "status": "pending"})
+    logger.info("[parse_python_ast] OUTPUT job_id=%s, status=pending", job.job_id)
+    return result
 
 
 # ─── MCP Tool 4 ─────────────────────────────────────────────
@@ -641,11 +661,15 @@ async def extract_entities(
         source_code: Python source code to analyse.
         file_path: Virtual file path for qualified name generation.
     """
+    logger.info("[extract_entities] INPUT  file_path=%r, source_code_length=%d",
+               file_path, len(source_code))
     job = _create_job("extract_entities")
     asyncio.create_task(
         _run_extract_entities_job(job, source_code, file_path)
     )
-    return json.dumps({"job_id": job.job_id, "status": "pending"})
+    result = json.dumps({"job_id": job.job_id, "status": "pending"})
+    logger.info("[extract_entities] OUTPUT job_id=%s, status=pending", job.job_id)
+    return result
 
 
 # ─── MCP Tool 5 ─────────────────────────────────────────────
@@ -669,20 +693,26 @@ async def get_index_status(
     Args:
         job_id: ID of a specific job to check.  Empty returns overview.
     """
+    logger.info("[get_index_status] INPUT  job_id=%r", job_id)
+
     # Specific job lookup
     if job_id:
         job = _jobs.get(job_id)
         if job is None:
+            logger.warning("[get_index_status] Job not found: %s", job_id)
             return json.dumps({"error": f"Job '{job_id}' not found"})
+        logger.info("[get_index_status] OUTPUT job_id=%s, status=%s", job_id, job.status)
         return json.dumps(_job_to_dict(job), default=str)
 
     # Overview: all jobs + graph stats
+    logger.info("[get_index_status] Generating overview of %d jobs...", len(_jobs))
     overview: dict = {
         "jobs": [_job_to_dict(j) for j in _jobs.values()],
     }
 
     # Try to get graph stats (may fail if Neo4j not connected yet)
     try:
+        logger.debug("[get_index_status] Fetching graph statistics...")
         gm = await _get_graph_manager()
         index_state = await gm.get_index_state()
         overview["index_state"] = index_state.get("state") if index_state else None
@@ -690,10 +720,14 @@ async def get_index_status(
         overview["edge_counts"] = await gm.get_edge_counts()
         overview["enrichment"] = await gm.get_enrichment_stats()
         overview["warnings"] = await gm.get_validation_warnings()
+        logger.info("[get_index_status] Graph statistics retrieved successfully")
     except Exception as e:
+        logger.warning("[get_index_status] Failed to get graph stats: %s", e)
         overview["graph_error"] = str(e)
 
-    return json.dumps(overview, default=str)
+    result = json.dumps(overview, default=str)
+    logger.info("[get_index_status] OUTPUT %d characters", len(result))
+    return result
 
 
 # ─── Entry point ─────────────────────────────────────────────

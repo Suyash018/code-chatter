@@ -56,12 +56,19 @@ class ResponseSynthesizer:
         Returns:
             Dict with response, agents_used, and had_errors.
         """
+        logger.info("ResponseSynthesizer.synthesize called")
+        logger.debug("Query: %s", query)
+        logger.info("Agent outputs to synthesize: %s", list(agent_outputs.keys()))
+        logger.info("Errors reported: %s", list(errors.keys()) if errors else "none")
+
         errors = errors or {}
 
         # Truncate long outputs
         truncated = {}
         for agent_name, output in agent_outputs.items():
             if len(output) > MAX_AGENT_OUTPUT_CHARS:
+                logger.debug("Truncating %s output from %d to %d chars",
+                           agent_name, len(output), MAX_AGENT_OUTPUT_CHARS)
                 truncated[agent_name] = output[:MAX_AGENT_OUTPUT_CHARS] + "\n... [truncated]"
             else:
                 truncated[agent_name] = output
@@ -85,6 +92,7 @@ class ResponseSynthesizer:
 
         # Graceful fallback when no outputs available
         if not truncated and not errors:
+            logger.warning("No agent outputs or errors available for synthesis")
             return {
                 "response": "I couldn't find information to answer this query. "
                 "The knowledge graph may not have been indexed yet.",
@@ -93,12 +101,14 @@ class ResponseSynthesizer:
             }
 
         try:
+            logger.info("Invoking LLM for synthesis (input: %d chars)...", len(user_content))
             response = await self._model.ainvoke(
                 [
                     {"role": "system", "content": SYNTHESIS_PROMPT},
                     {"role": "user", "content": user_content},
                 ]
             )
+            logger.debug("LLM returned %d characters", len(response.content))
 
             logger.info(
                 "Synthesized response from %d agent outputs (%d errors)",

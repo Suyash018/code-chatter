@@ -10,12 +10,23 @@ from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisco
 from langfuse import observe
 from pydantic import BaseModel, Field
 
+from src.agents.response_formatter.format import ResponseFormatter
 from src.shared.logging import setup_logging
 from src.shared.observability import extract_trace_context, is_langfuse_enabled
 
 logger = setup_logging("gateway.routes.chat", level="INFO")
 
 router = APIRouter()
+
+# Singleton response formatter (lazy-initialized)
+_response_formatter: ResponseFormatter | None = None
+
+
+def _get_response_formatter() -> ResponseFormatter:
+    global _response_formatter
+    if _response_formatter is None:
+        _response_formatter = ResponseFormatter()
+    return _response_formatter
 
 
 # ─── Request/Response Models ────────────────────────────────
@@ -43,6 +54,9 @@ class ChatResponse(BaseModel):
     )
     errors: dict[str, str] = Field(
         default_factory=dict, description="Any agent errors that occurred"
+    )
+    suggestive_pills: list[str] = Field(
+        default_factory=list, description="Suggested follow-up questions"
     )
 
 
@@ -150,7 +164,19 @@ async def _process_chat_message(
         errors=json.dumps(errors),
     )
 
-    final_response = synthesis.get("response", "I couldn't generate a response.")
+    raw_response = synthesis.get("response", "I couldn't generate a response.")
+
+    # Step 4: Format response and generate suggestive pills
+    logger.info(f"Formatting response with suggestive pills")
+    try:
+        formatter = _get_response_formatter()
+        formatted = await formatter.format_response(raw_response)
+        final_response = formatted.get("response", raw_response)
+        suggestive_pills = formatted.get("suggestive_pills", [])
+    except Exception as e:
+        logger.warning(f"Response formatter failed, using raw response: {e}")
+        final_response = raw_response
+        suggestive_pills = []
 
     return ChatResponse(
         session_id=session_id,
@@ -159,6 +185,7 @@ async def _process_chat_message(
         entities=entities,
         agents_called=agents_called,
         errors=errors,
+        suggestive_pills=suggestive_pills,
     )
 
 

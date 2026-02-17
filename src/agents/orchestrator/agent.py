@@ -128,9 +128,12 @@ class OrchestratorAgent:
         Args:
             settings: Optional settings override.  Falls back to env vars.
         """
+        logger.info("Creating OrchestratorAgent...")
         settings = settings or OrchestratorSettings()
+        logger.debug("Using model: %s", settings.orchestrator_model)
 
         # Connect to the Orchestrator MCP server over stdio
+        logger.info("Connecting to Orchestrator MCP server via stdio...")
         client = MultiServerMCPClient(
             {
                 "orchestrator": {
@@ -141,6 +144,7 @@ class OrchestratorAgent:
             }
         )
 
+        logger.info("Loading tools from Orchestrator MCP server...")
         tools = await client.get_tools()
         logger.info(
             "Loaded %d tools from Orchestrator MCP server: %s",
@@ -148,6 +152,7 @@ class OrchestratorAgent:
             [t.name for t in tools],
         )
 
+        logger.info("Initializing LLM model and creating ReAct agent...")
         model = get_openai_model(settings.orchestrator_model)
         checkpointer = MemorySaver()
 
@@ -160,6 +165,7 @@ class OrchestratorAgent:
         )
 
         formatter = ResponseFormatter()
+        logger.info("OrchestratorAgent created successfully")
 
         return cls(client=client, agent=agent, formatter=formatter)
 
@@ -181,25 +187,35 @@ class OrchestratorAgent:
         Returns:
             A dict with "response" (str) and "suggestive_pills" (list[str]).
         """
+        logger.info("OrchestratorAgent.invoke called - session_id=%s", session_id)
+        logger.debug("Query: %s", query)
+
         # Include session_id in the message so tools can use it
         user_content = f"[session_id={session_id}] {query}"
 
+        logger.info("Invoking ReAct agent...")
         result = await self._agent.ainvoke(
             {"messages": [HumanMessage(content=user_content)]},
             config={"configurable": {"thread_id": session_id}},
         )
+        logger.debug("Agent returned %d messages in conversation", len(result.get("messages", [])))
 
         # Extract the final AI message
+        logger.debug("Extracting final AI response from %d messages", len(result.get("messages", [])))
         raw_response = "I was unable to produce an answer for this query."
         messages = result.get("messages", [])
         for msg in reversed(messages):
             if hasattr(msg, "content") and msg.content and msg.type == "ai":
                 if not getattr(msg, "tool_calls", None) or msg.content:
                     raw_response = msg.content
+                    logger.debug("Found AI response: %s...", raw_response[:100])
                     break
 
         # Format the response with response + suggestive_pills
+        logger.info("Formatting response...")
         formatted = await self._formatter.format_response(raw_response)
+        logger.info("OrchestratorAgent.invoke completed successfully")
+        logger.debug("Formatted response keys: %s", list(formatted.keys()))
         return formatted
 
     # ─── Cleanup ──────────────────────────────────────────

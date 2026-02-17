@@ -118,10 +118,13 @@ class GraphQueryAgent:
             settings: Optional settings override.  Falls back to env vars.
         """
         import os
+        logger.info("Creating GraphQueryAgent...")
         settings = settings or GraphQuerySettings()
+        logger.debug("Using model: %s", settings.query_model)
 
         # Connect via HTTP/SSE to the graph_query service
         graph_query_url = os.getenv("GRAPH_QUERY_URL", "http://graph_query:8003/sse")
+        logger.info("Connecting to Graph Query MCP server at %s...", graph_query_url)
         client = MultiServerMCPClient(
             {
                 "graph_query": {
@@ -132,6 +135,7 @@ class GraphQueryAgent:
             tool_interceptors=[MCPTraceContextInterceptor()] if is_langfuse_enabled() else [],
         )
 
+        logger.info("Loading tools from Graph Query MCP server...")
         tools = await client.get_tools()
         logger.info(
             "Loaded %d tools from Graph Query MCP server: %s",
@@ -139,6 +143,7 @@ class GraphQueryAgent:
             [t.name for t in tools],
         )
 
+        logger.info("Initializing LLM model and creating ReAct agent...")
         model = get_openai_model(settings.query_model)
 
         agent = create_react_agent(
@@ -148,6 +153,7 @@ class GraphQueryAgent:
             name="graph_query_agent",
         )
 
+        logger.info("GraphQueryAgent created successfully")
         return cls(client=client, agent=agent)
 
     # ─── Invoke ───────────────────────────────────────────
@@ -168,6 +174,10 @@ class GraphQueryAgent:
             A structured context string containing entities, relationships,
             and source snippets from the knowledge graph.
         """
+        logger.info("GraphQueryAgent.invoke called")
+        logger.debug("Query: %s", query)
+        logger.info("Focusing on %d entities: %s", len(entities or []), entities)
+
         parts: list[str] = []
 
         if entities:
@@ -178,16 +188,21 @@ class GraphQueryAgent:
         parts.append(f"Question: {query}")
         user_content = "\n\n".join(parts)
 
+        logger.info("Invoking ReAct agent...")
         result = await self._agent.ainvoke(
             {"messages": [HumanMessage(content=user_content)]},
         )
 
+        logger.debug("Agent returned %d messages", len(result.get("messages", [])))
         messages = result.get("messages", [])
         for msg in reversed(messages):
             if hasattr(msg, "content") and msg.content and msg.type == "ai":
                 if not getattr(msg, "tool_calls", None) or msg.content:
+                    logger.info("GraphQueryAgent.invoke completed successfully (%d chars)", len(msg.content))
+                    logger.debug("Response preview: %s...", msg.content[:200])
                     return msg.content
 
+        logger.warning("No graph context could be retrieved for this query")
         return "No graph context could be retrieved for this query."
 
     # ─── Cleanup ──────────────────────────────────────────

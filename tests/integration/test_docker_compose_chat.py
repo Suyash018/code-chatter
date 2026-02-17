@@ -420,7 +420,7 @@ class IntegrationTestRunner:
     def check_health(self) -> bool:
         """Check if the gateway is healthy."""
         try:
-            response = self.client.get(f"{GATEWAY_URL}/api/agents/health", timeout=10.0)
+            response = self.client.get(f"{GATEWAY_URL}/api/health", timeout=10.0)
             if response.status_code == 200:
                 print("✓ Gateway is healthy")
                 return True

@@ -89,10 +89,13 @@ class CodeAnalystAgent:
             settings: Optional settings override.  Falls back to env vars.
         """
         import os
+        logger.info("Creating CodeAnalystAgent...")
         settings = settings or CodeAnalystSettings()
+        logger.debug("Using model: %s", settings.analysis_model)
 
         # Connect via HTTP/SSE to the code_analyst service
         code_analyst_url = os.getenv("CODE_ANALYST_URL", "http://code_analyst:8004/sse")
+        logger.info("Connecting to Code Analyst MCP server at %s...", code_analyst_url)
         client = MultiServerMCPClient(
             {
                 "code_analyst": {
@@ -103,6 +106,7 @@ class CodeAnalystAgent:
             tool_interceptors=[MCPTraceContextInterceptor()] if is_langfuse_enabled() else [],
         )
 
+        logger.info("Loading tools from Code Analyst MCP server...")
         tools = await client.get_tools()
         logger.info(
             "Loaded %d tools from Code Analyst MCP server: %s",
@@ -110,6 +114,7 @@ class CodeAnalystAgent:
             [t.name for t in tools],
         )
 
+        logger.info("Initializing LLM model and creating ReAct agent...")
         model = get_openai_model(settings.analysis_model)
 
         agent = create_react_agent(
@@ -119,6 +124,7 @@ class CodeAnalystAgent:
             name="code_analyst_agent",
         )
 
+        logger.info("CodeAnalystAgent created successfully")
         return cls(client=client, agent=agent)
 
     # ─── Invoke ───────────────────────────────────────────
@@ -138,23 +144,34 @@ class CodeAnalystAgent:
         Returns:
             A synthesised natural-language answer string.
         """
+        logger.info("CodeAnalystAgent.invoke called")
+        logger.debug("Query: %s", query)
+        logger.info("Context provided: %d characters", len(context))
+        if context:
+            logger.debug("Context preview: %s...", context[:200])
+
         user_content = query
         if context:
             user_content = f"Context: {context}\n\nQuestion: {query}"
 
+        logger.info("Invoking ReAct agent...")
         result = await self._agent.ainvoke(
             {"messages": [HumanMessage(content=user_content)]},
         )
 
         # Extract the final AI message from the conversation
+        logger.debug("Agent returned %d messages", len(result.get("messages", [])))
         messages = result.get("messages", [])
 
         for msg in reversed(messages):
             if hasattr(msg, "content") and msg.content and msg.type == "ai":
                 # Skip messages that are pure tool calls with no text
                 if not getattr(msg, "tool_calls", None) or msg.content:
+                    logger.info("CodeAnalystAgent.invoke completed successfully (%d chars)", len(msg.content))
+                    logger.debug("Response preview: %s...", msg.content[:200])
                     return msg.content
 
+        logger.warning("No analysis could be produced for this query")
         return "I was unable to produce an analysis for this query."
 
     # ─── Cleanup ──────────────────────────────────────────

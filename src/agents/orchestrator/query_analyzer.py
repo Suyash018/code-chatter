@@ -77,8 +77,13 @@ class QueryAnalyzer:
             Dict with intent, entities, requires_graph, requires_analysis,
             requires_indexing, and confidence.
         """
+        logger.info("QueryAnalyzer.analyze called")
+        logger.debug("Query: %s", query)
+        logger.debug("Has conversation context: %s", bool(conversation_context))
+
         context_section = ""
         if conversation_context:
+            logger.debug("Context summary: %s", conversation_context[:200])
             context_section = (
                 f"Recent conversation context:\n{conversation_context}\n\n"
                 "Use this to detect follow_up intent and resolve entity "
@@ -91,6 +96,7 @@ class QueryAnalyzer:
         )
 
         try:
+            logger.info("Invoking LLM for query analysis...")
             response = await self._model.ainvoke(
                 [
                     {"role": "system", "content": prompt},
@@ -98,6 +104,7 @@ class QueryAnalyzer:
                 ]
             )
             raw = response.content.strip()
+            logger.debug("LLM raw response: %s", raw[:200])
             # Strip markdown fences if present
             if raw.startswith("```"):
                 raw = raw.split("\n", 1)[1]

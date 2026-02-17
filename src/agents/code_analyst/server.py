@@ -39,7 +39,9 @@ def _get_settings() -> CodeAnalystSettings:
     """Lazy-initialise settings from environment variables."""
     global _settings
     if _settings is None:
+        logger.info("Initializing CodeAnalystSettings from environment...")
         _settings = CodeAnalystSettings()
+        logger.info("CodeAnalystSettings initialized")
     return _settings
 
 
@@ -47,7 +49,9 @@ def _get_retriever() -> GraphContextRetriever:
     """Lazy-initialise the retriever on first tool call."""
     global _retriever
     if _retriever is None:
+        logger.info("Initializing GraphContextRetriever (first tool call)...")
         _retriever = GraphContextRetriever(_get_settings())
+        logger.info("GraphContextRetriever initialized successfully")
     return _retriever
 
 
@@ -77,9 +81,15 @@ def analyze_function(
         include_source: Whether to include the full source code.
     """
     logger.info("[analyze_function] INPUT  name=%r, depth=%d, include_source=%s", name, depth, include_source)
-    result = _get_retriever().get_function_analysis(name, depth, include_source)
-    output = json.dumps(result, default=str)
-    return output
+    try:
+        result = _get_retriever().get_function_analysis(name, depth, include_source)
+        output = json.dumps(result, default=str)
+        logger.info("[analyze_function] OUTPUT %d characters, found=%s", len(output), result.get("found", False))
+        logger.debug("[analyze_function] Result preview: %s...", output[:200])
+        return output
+    except Exception as exc:
+        logger.error("[analyze_function] FAILED: %s", exc, exc_info=True)
+        raise
 
 
 # ─── Tool 2 ──────────────────────────────────────────────
@@ -109,11 +119,17 @@ def analyze_class(
         include_inheritance: Include base classes (up) and subclasses (down).
     """
     logger.info("[analyze_class] INPUT  name=%r, include_methods=%s, include_attributes=%s, include_inheritance=%s", name, include_methods, include_attributes, include_inheritance)
-    result = _get_retriever().get_class_analysis(
-        name, include_methods, include_attributes, include_inheritance,
-    )
-    output = json.dumps(result, default=str)
-    return output
+    try:
+        result = _get_retriever().get_class_analysis(
+            name, include_methods, include_attributes, include_inheritance,
+        )
+        output = json.dumps(result, default=str)
+        logger.info("[analyze_class] OUTPUT %d characters, found=%s", len(output), result.get("found", False))
+        logger.debug("[analyze_class] Result preview: %s...", output[:200])
+        return output
+    except Exception as exc:
+        logger.error("[analyze_class] FAILED: %s", exc, exc_info=True)
+        raise
 
 
 # ─── Tool 3 ──────────────────────────────────────────────
@@ -142,9 +158,15 @@ def find_patterns(
         include_source: Include source code of implementing entities.
     """
     logger.info("[find_patterns] INPUT  pattern_name=%r, module_scope=%r, include_source=%s", pattern_name, module_scope, include_source)
-    result = _get_retriever().get_patterns(pattern_name, module_scope, include_source)
-    output = json.dumps(result, default=str)
-    return output
+    try:
+        result = _get_retriever().get_patterns(pattern_name, module_scope, include_source)
+        output = json.dumps(result, default=str)
+        logger.info("[find_patterns] OUTPUT %d characters, patterns_count=%d", len(output), len(result))
+        logger.debug("[find_patterns] Result preview: %s...", output[:200])
+        return output
+    except Exception as exc:
+        logger.error("[find_patterns] FAILED: %s", exc, exc_info=True)
+        raise
 
 
 # ─── Tool 4 ──────────────────────────────────────────────
@@ -172,9 +194,15 @@ def get_code_snippet(
         include_imports: Include the file's import statements.
     """
     logger.info("[get_code_snippet] INPUT  name=%r, neighborhood=%d, include_imports=%s", name, neighborhood, include_imports)
-    result = _get_retriever().get_code_snippet(name, neighborhood, include_imports)
-    output = json.dumps(result, default=str)
-    return output
+    try:
+        result = _get_retriever().get_code_snippet(name, neighborhood, include_imports)
+        output = json.dumps(result, default=str)
+        logger.info("[get_code_snippet] OUTPUT %d characters, found=%s", len(output), result.get("found", False))
+        logger.debug("[get_code_snippet] Result preview: %s...", output[:200])
+        return output
+    except Exception as exc:
+        logger.error("[get_code_snippet] FAILED: %s", exc, exc_info=True)
+        raise
 
 
 # ─── Tool 5 ──────────────────────────────────────────────
@@ -204,11 +232,17 @@ def explain_implementation(
         max_depth: Maximum hops when tracing chains (1-5).
     """
     logger.info("[explain_implementation] INPUT  name=%r, follow_data_flow=%s, follow_calls=%s, max_depth=%d", name, follow_data_flow, follow_calls, max_depth)
-    result = _get_retriever().get_implementation_details(
-        name, follow_data_flow, follow_calls, max_depth,
-    )
-    output = json.dumps(result, default=str)
-    return output
+    try:
+        result = _get_retriever().get_implementation_details(
+            name, follow_data_flow, follow_calls, max_depth,
+        )
+        output = json.dumps(result, default=str)
+        logger.info("[explain_implementation] OUTPUT %d characters, found=%s", len(output), result.get("found", False))
+        logger.debug("[explain_implementation] Result preview: %s...", output[:200])
+        return output
+    except Exception as exc:
+        logger.error("[explain_implementation] FAILED: %s", exc, exc_info=True)
+        raise
 
 
 # ─── Tool 6 ──────────────────────────────────────────────
@@ -237,11 +271,18 @@ def compare_implementations(
                                concepts for both entities.
     """
     logger.info("[compare_implementations] INPUT  name_a=%r, name_b=%r, include_source=%s, include_relationships=%s", name_a, name_b, include_source, include_relationships)
-    result = _get_retriever().compare_entities(
-        name_a, name_b, include_source, include_relationships,
-    )
-    output = json.dumps(result, default=str)
-    return output
+    try:
+        result = _get_retriever().compare_entities(
+            name_a, name_b, include_source, include_relationships,
+        )
+        output = json.dumps(result, default=str)
+        logger.info("[compare_implementations] OUTPUT %d characters, both_found=%s", len(output),
+                   result.get("entity_a", {}).get("found", False) and result.get("entity_b", {}).get("found", False))
+        logger.debug("[compare_implementations] Result preview: %s...", output[:200])
+        return output
+    except Exception as exc:
+        logger.error("[compare_implementations] FAILED: %s", exc, exc_info=True)
+        raise
 
 
 # ─── Entry point ──────────────────────────────────────────

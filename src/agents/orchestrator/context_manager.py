@@ -52,8 +52,14 @@ class ContextManager:
             Dict with turn_count, entities_discussed, recent_turns,
             last_intent, and last_agents_called.
         """
+        logger.info("ContextManager.get_context called - session_id=%s", session_id)
         ctx = self._get_or_create(session_id)
         limit = max_turns or self._max_turns
+
+        logger.debug(
+            "Retrieving context: turn_count=%d, entities=%d, limit=%d",
+            ctx.turn_count, len(ctx.entities_mentioned), limit
+        )
 
         return {
             "session_id": session_id,
@@ -113,8 +119,10 @@ class ContextManager:
         Used by query analyzer to detect follow-ups and resolve
         references like 'it', 'that class', etc.
         """
+        logger.debug("ContextManager.get_context_summary called - session_id=%s", session_id)
         ctx = self._get_or_create(session_id)
         if ctx.turn_count == 0:
+            logger.debug("No prior turns for session %s", session_id)
             return ""
 
         unique_entities = list(dict.fromkeys(ctx.entities_mentioned))
@@ -126,4 +134,6 @@ class ContextManager:
         if ctx.turn_summaries:
             parts.append(f"Last turn: {ctx.turn_summaries[-1][:200]}")
 
-        return " ".join(parts)
+        summary = " ".join(parts)
+        logger.debug("Context summary: %s", summary[:100])
+        return summary

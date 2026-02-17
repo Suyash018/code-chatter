@@ -116,14 +116,16 @@ class GraphQueryAgent:
         Args:
             settings: Optional settings override.  Falls back to env vars.
         """
+        import os
         settings = settings or GraphQuerySettings()
 
+        # Connect via HTTP/SSE to the graph_query service
+        graph_query_url = os.getenv("GRAPH_QUERY_URL", "http://graph_query:8003")
         client = MultiServerMCPClient(
             {
                 "graph_query": {
-                    "command": sys.executable,
-                    "args": ["-m", "src.agents.graph_query.server"],
-                    "transport": "stdio",
+                    "url": graph_query_url,
+                    "transport": "sse",
                 },
             }
         )

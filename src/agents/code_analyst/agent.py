@@ -87,15 +87,16 @@ class CodeAnalystAgent:
         Args:
             settings: Optional settings override.  Falls back to env vars.
         """
+        import os
         settings = settings or CodeAnalystSettings()
 
-        # Connect to the Code Analyst MCP server over stdio
+        # Connect via HTTP/SSE to the code_analyst service
+        code_analyst_url = os.getenv("CODE_ANALYST_URL", "http://code_analyst:8004")
         client = MultiServerMCPClient(
             {
                 "code_analyst": {
-                    "command": sys.executable,
-                    "args": ["-m", "src.agents.code_analyst.server"],
-                    "transport": "stdio",
+                    "url": code_analyst_url,
+                    "transport": "sse",
                 },
             }
         )

@@ -292,5 +292,9 @@ def get_subgraph(
 # ─── Entry point ──────────────────────────────────────────
 
 if __name__ == "__main__":
-    logger.info("Starting Graph Query MCP server (stdio transport)")
-    mcp.run(transport="stdio")
+    settings = _get_settings()
+    host = getattr(settings, 'host', '0.0.0.0')
+    port = getattr(settings, 'port', 8003)
+
+    logger.info(f"Starting Graph Query MCP server (SSE transport on {host}:{port})")
+    mcp.run(transport="sse", host=host, port=port)

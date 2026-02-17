@@ -9,6 +9,8 @@ class GraphQuerySettings(BaseAgentSettings):
     """Settings specific to the Graph Query Agent."""
 
     agent_name: str = "graph_query"
+    host: str = "0.0.0.0"
+    port: int = 8003
     max_traversal_depth: int = 3
     max_results: int = 50
     vector_search_top_k: int = 10

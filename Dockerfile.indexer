@@ -4,9 +4,10 @@ FROM python:3.12-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies (Git is needed for repository cloning)
+# Install system dependencies (Git is needed for repository cloning, curl for health checks)
 RUN apt-get update && apt-get install -y \
     git \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency files
@@ -19,10 +20,12 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code
 COPY src/ ./src/
 COPY .env.example ./.env.example
-COPY .env ./.env
 
 # Create directory for cloned repositories
 RUN mkdir -p /app/repos
 
-# Run the indexer MCP server (stdio transport)
+# Expose MCP server port
+EXPOSE 8002
+
+# Run the indexer MCP server (SSE transport)
 CMD ["python", "-m", "src.agents.indexer.server"]

@@ -103,14 +103,16 @@ class IndexerAgent:
         Args:
             settings: Optional settings override.  Falls back to env vars.
         """
+        import os
         settings = settings or IndexerSettings()
 
+        # Connect via HTTP/SSE to the indexer service
+        indexer_url = os.getenv("INDEXER_URL", "http://indexer:8002")
         client = MultiServerMCPClient(
             {
                 "indexer": {
-                    "command": sys.executable,
-                    "args": ["-m", "src.agents.indexer.server"],
-                    "transport": "stdio",
+                    "url": indexer_url,
+                    "transport": "sse",
                 },
             }
         )

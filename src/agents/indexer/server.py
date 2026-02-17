@@ -682,5 +682,9 @@ async def get_index_status(
 
 
 if __name__ == "__main__":
-    logger.info("Starting Indexer MCP server (stdio transport)")
-    mcp.run(transport="stdio")
+    settings = _get_settings()
+    host = getattr(settings, 'host', '0.0.0.0')
+    port = getattr(settings, 'port', 8002)
+
+    logger.info(f"Starting Indexer MCP server (SSE transport on {host}:{port})")
+    mcp.run(transport="sse", host=host, port=port)

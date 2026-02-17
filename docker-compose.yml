@@ -33,6 +33,116 @@ services:
       - graphical-rag-network
 
   # ═══════════════════════════════════════════════════════════
+  # MCP Agent Servers (SSE Transport - Long-Running Services)
+  # ═══════════════════════════════════════════════════════════
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    container_name: graphical-rag-orchestrator
+    env_file:
+      - .env
+    environment:
+      - ORCHESTRATOR_HOST=0.0.0.0
+      - ORCHESTRATOR_PORT=8001
+      - NEO4J_URI=bolt://neo4j:7687
+    ports:
+      - "8001:8001"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/sse"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - graphical-rag-network
+    restart: unless-stopped
+
+  indexer:
+    build:
+      context: .
+      dockerfile: Dockerfile.indexer
+    container_name: graphical-rag-indexer
+    env_file:
+      - .env
+    environment:
+      - INDEXER_HOST=0.0.0.0
+      - INDEXER_PORT=8002
+      - NEO4J_URI=bolt://neo4j:7687
+    ports:
+      - "8002:8002"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    volumes:
+      - indexer_repos:/app/repos  # Persist cloned repositories
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/sse"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - graphical-rag-network
+    restart: unless-stopped
+
+  graph_query:
+    build:
+      context: .
+      dockerfile: Dockerfile.graph_query
+    container_name: graphical-rag-graph-query
+    env_file:
+      - .env
+    environment:
+      - GRAPH_QUERY_HOST=0.0.0.0
+      - GRAPH_QUERY_PORT=8003
+      - NEO4J_URI=bolt://neo4j:7687
+    ports:
+      - "8003:8003"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/sse"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - graphical-rag-network
+    restart: unless-stopped
+
+  code_analyst:
+    build:
+      context: .
+      dockerfile: Dockerfile.code_analyst
+    container_name: graphical-rag-code-analyst
+    env_file:
+      - .env
+    environment:
+      - CODE_ANALYST_HOST=0.0.0.0
+      - CODE_ANALYST_PORT=8004
+      - NEO4J_URI=bolt://neo4j:7687
+    ports:
+      - "8004:8004"
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/sse"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - graphical-rag-network
+    restart: unless-stopped
+
+  # ═══════════════════════════════════════════════════════════
   # FastAPI Gateway
   # ═══════════════════════════════════════════════════════════
   gateway:
@@ -46,38 +156,33 @@ services:
       - GATEWAY_HOST=0.0.0.0
       - GATEWAY_PORT=8000
       - NEO4J_URI=bolt://neo4j:7687
+      # Agent URLs for HTTP connection
+      - ORCHESTRATOR_URL=http://orchestrator:8001
+      - INDEXER_URL=http://indexer:8002
+      - GRAPH_QUERY_URL=http://graph_query:8003
+      - CODE_ANALYST_URL=http://code_analyst:8004
     ports:
       - "${GATEWAY_PORT:-8000}:8000"
     depends_on:
       neo4j:
+        condition: service_healthy
+      orchestrator:
+        condition: service_healthy
+      indexer:
+        condition: service_healthy
+      graph_query:
+        condition: service_healthy
+      code_analyst:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/health')"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
     networks:
       - graphical-rag-network
     restart: unless-stopped
-
-  # ═══════════════════════════════════════════════════════════
-  # MCP Agent Servers (stdio transport - no exposed ports)
-  # These run as services but communicate via stdio when
-  # spawned by parent agents
-  # ═══════════════════════════════════════════════════════════
-
-  # Note: MCP servers use stdio transport, so they're not
-  # long-running HTTP services. They're spawned on-demand by
-  # the gateway and parent agents.
-  #
-  # For Docker deployment, we have two options:
-  # 1. Package agents in the gateway image (simpler)
-  # 2. Run agents as separate containers with SSH/exec
-  #
-  # For this assignment, we're using option 1 - all agent
-  # code is included in the gateway image and spawned via
-  # subprocess when needed.
 
 # ═══════════════════════════════════════════════════════════
 # Volumes
@@ -90,6 +195,8 @@ volumes:
   neo4j_import:
     driver: local
   neo4j_plugins:
+    driver: local
+  indexer_repos:
     driver: local
 
 # ═══════════════════════════════════════════════════════════

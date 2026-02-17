@@ -3,11 +3,12 @@ Index routes — POST /api/index and GET /api/index/status/{job_id}.
 """
 
 import json
-import sys
+import os
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langfuse.decorators import observe
 from pydantic import BaseModel, Field
 
 from src.shared.logging import setup_logging
@@ -25,18 +26,19 @@ async def _get_indexer_client() -> MultiServerMCPClient:
     global _indexer_client
 
     if _indexer_client is None:
-        logger.info("Initializing Indexer MCP client")
+        indexer_url = os.getenv("INDEXER_URL", "http://indexer:8002")
+        logger.info(f"Initializing Indexer MCP client at {indexer_url}")
         _indexer_client = MultiServerMCPClient({
             "indexer": {
-                "command": sys.executable,
-                "args": ["-m", "src.agents.indexer.server"],
-                "transport": "stdio",
+                "url": indexer_url,
+                "transport": "sse",
             }
         })
 
     return _indexer_client
 
 
+@observe(name="call_indexer_tool", as_type="span")
 async def _call_indexer_tool(tool_name: str, **kwargs) -> dict:
     """Call an indexer tool and return parsed JSON result."""
     try:
@@ -123,6 +125,7 @@ class IndexStatusResponse(BaseModel):
 
 
 @router.post("/index", response_model=IndexResponse)
+@observe(name="trigger_indexing", as_type="generation")
 async def trigger_indexing(
     request: IndexRequest,
     background_tasks: BackgroundTasks,
@@ -199,6 +202,7 @@ async def trigger_indexing(
 
 
 @router.get("/index/status/{job_id}", response_model=IndexStatusResponse)
+@observe(name="get_indexing_status", as_type="span")
 async def get_indexing_status(job_id: str) -> IndexStatusResponse:
     """Get the status of an indexing job.
 
@@ -258,6 +262,7 @@ async def get_indexing_status(job_id: str) -> IndexStatusResponse:
 
 
 @router.get("/index/status", response_model=dict)
+@observe(name="get_indexing_overview", as_type="span")
 async def get_indexing_overview() -> dict:
     """Get an overview of all indexing jobs and graph statistics.
 

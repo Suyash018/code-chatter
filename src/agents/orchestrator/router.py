@@ -7,6 +7,7 @@ and collects results.
 """
 
 import asyncio
+import os
 
 from src.agents.orchestrator.config import OrchestratorSettings
 from src.shared.logging import setup_logging

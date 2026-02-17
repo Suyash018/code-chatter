@@ -7,9 +7,11 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from langfuse.decorators import observe
 from pydantic import BaseModel, Field
 
 from src.shared.logging import setup_logging
+from src.shared.observability import is_langfuse_enabled
 
 logger = setup_logging("gateway.routes.chat", level="INFO")
 
@@ -47,6 +49,7 @@ class ChatResponse(BaseModel):
 # ─── Helper Functions ───────────────────────────────────────
 
 
+@observe(name="call_orchestrator_tool", as_type="span")
 async def _call_orchestrator_tool(
     client: Any, tool_name: str, **kwargs
 ) -> dict:
@@ -78,6 +81,7 @@ async def _call_orchestrator_tool(
         )
 
 
+@observe(name="process_chat_message", as_type="generation")
 async def _process_chat_message(
     client: Any, message: str, session_id: str
 ) -> ChatResponse:
@@ -140,6 +144,7 @@ async def _process_chat_message(
 
 
 @router.post("/chat", response_model=ChatResponse)
+@observe(name="chat_endpoint", as_type="generation")
 async def chat(request_body: ChatRequest, request: Request) -> ChatResponse:
     """Send a message and receive a response from the multi-agent system.
 

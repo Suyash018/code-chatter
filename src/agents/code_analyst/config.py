@@ -9,6 +9,8 @@ class CodeAnalystSettings(BaseAgentSettings):
     """Settings specific to the Code Analyst Agent."""
 
     agent_name: str = "code_analyst"
+    host: str = "0.0.0.0"
+    port: int = 8004
     analysis_model: str = os.getenv("DEFAULT_MODEL", "gpt-5.2-2025-12-11")
     max_source_context_lines: int = 200
 

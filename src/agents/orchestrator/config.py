@@ -9,6 +9,8 @@ class OrchestratorSettings(BaseAgentSettings):
     """Settings specific to the Orchestrator Agent."""
 
     agent_name: str = "orchestrator"
+    host: str = "0.0.0.0"
+    port: int = 8001
     max_agent_retries: int = 2
     synthesis_model: str = os.getenv("DEFAULT_MODEL", "gpt-5.2-2025-12-11")
     analysis_model: str = os.getenv("DEFAULT_MODEL", "gpt-5.2-2025-12-11")

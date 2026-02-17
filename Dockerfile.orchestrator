@@ -4,9 +4,10 @@ FROM python:3.12-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (including curl for health checks)
 RUN apt-get update && apt-get install -y \
     git \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency files
@@ -19,7 +20,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy application code
 COPY src/ ./src/
 COPY .env.example ./.env.example
-COPY .env ./.env
 
-# Run the orchestrator MCP server (stdio transport)
+# Expose MCP server port
+EXPOSE 8001
+
+# Run the orchestrator MCP server (SSE transport)
 CMD ["python", "-m", "src.agents.orchestrator.server"]

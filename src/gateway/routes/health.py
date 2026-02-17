@@ -2,11 +2,12 @@
 Health routes — GET /api/agents/health and GET /api/graph/statistics.
 """
 
-import sys
+import os
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langfuse.decorators import observe
 from pydantic import BaseModel, Field
 
 from src.shared.logging import setup_logging
@@ -18,22 +19,34 @@ router = APIRouter()
 # Global MCP clients for health checks (lazy initialization)
 _agent_clients: dict[str, MultiServerMCPClient] = {}
 
+# Agent URL mapping
+AGENT_URLS = {
+    "orchestrator": os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8001"),
+    "indexer": os.getenv("INDEXER_URL", "http://indexer:8002"),
+    "graph_query": os.getenv("GRAPH_QUERY_URL", "http://graph_query:8003"),
+    "code_analyst": os.getenv("CODE_ANALYST_URL", "http://code_analyst:8004"),
+}
+
 
 async def _get_agent_client(agent_name: str) -> MultiServerMCPClient:
     """Lazy initialization of agent MCP clients."""
     if agent_name not in _agent_clients:
-        logger.info(f"Initializing {agent_name} MCP client for health checks")
+        agent_url = AGENT_URLS.get(agent_name)
+        if not agent_url:
+            raise ValueError(f"Unknown agent: {agent_name}")
+
+        logger.info(f"Initializing {agent_name} MCP client at {agent_url}")
         _agent_clients[agent_name] = MultiServerMCPClient({
             agent_name: {
-                "command": sys.executable,
-                "args": ["-m", f"src.agents.{agent_name}.server"],
-                "transport": "stdio",
+                "url": agent_url,
+                "transport": "sse",
             }
         })
 
     return _agent_clients[agent_name]
 
 
+@observe(name="check_agent_health", as_type="span")
 async def _check_agent_health(agent_name: str) -> dict[str, Any]:
     """Check health of a single agent."""
     try:
@@ -103,6 +116,7 @@ class GraphStatistics(BaseModel):
 
 
 @router.get("/agents/health", response_model=AgentsHealthResponse)
+@observe(name="get_agents_health", as_type="span")
 async def get_agents_health() -> AgentsHealthResponse:
     """Health check for all MCP agents.
 
@@ -171,6 +185,7 @@ async def get_agents_health() -> AgentsHealthResponse:
 
 
 @router.get("/graph/statistics", response_model=GraphStatistics)
+@observe(name="get_graph_statistics", as_type="span")
 async def get_graph_statistics() -> GraphStatistics:
     """Get knowledge graph statistics.
 

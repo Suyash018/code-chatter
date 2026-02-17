@@ -2,10 +2,10 @@
 FastAPI Gateway — HTTP/WebSocket API layer.
 
 External interface for the multi-agent system.
-Routes requests to the Orchestrator Agent.
+Routes requests to the Orchestrator Agent via HTTP (SSE transport).
 """
 
-import sys
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -15,6 +15,12 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from src.gateway.config import GatewaySettings
 from src.gateway.routes import chat, health, index
 from src.shared.logging import setup_logging
+from src.shared.observability import (
+    LangfuseMiddleware,
+    init_langfuse,
+    is_langfuse_enabled,
+    shutdown_langfuse,
+)
 
 logger = setup_logging("gateway.app", level="INFO")
 
@@ -35,14 +41,23 @@ async def lifespan(app: FastAPI):
     global orchestrator_client
 
     logger.info("Starting FastAPI Gateway")
-    logger.info(f"Connecting to Orchestrator MCP server")
 
-    # Initialize the orchestrator client
+    # Initialize Langfuse observability
+    init_langfuse()
+    if is_langfuse_enabled():
+        logger.info("Langfuse observability enabled")
+    else:
+        logger.info("Langfuse observability disabled")
+
+    # Get orchestrator URL from environment
+    orchestrator_url = os.getenv("ORCHESTRATOR_URL", "http://orchestrator:8001")
+    logger.info(f"Connecting to Orchestrator MCP server at {orchestrator_url}")
+
+    # Initialize the orchestrator client with HTTP/SSE transport
     orchestrator_client = MultiServerMCPClient({
         "orchestrator": {
-            "command": sys.executable,
-            "args": ["-m", "src.agents.orchestrator.server"],
-            "transport": "stdio",
+            "url": orchestrator_url,
+            "transport": "sse",
         }
     })
 
@@ -55,6 +70,7 @@ async def lifespan(app: FastAPI):
 
     # Cleanup
     logger.info("Shutting down FastAPI Gateway")
+    shutdown_langfuse()
     orchestrator_client = None
 
 
@@ -74,6 +90,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Add Langfuse observability middleware
+app.add_middleware(LangfuseMiddleware)
 
 # Register routers
 app.include_router(chat.router, prefix="/api", tags=["Chat"])

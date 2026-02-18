@@ -4,12 +4,14 @@ A production-ready multi-agent system that answers questions about the FastAPI c
 
 ## Features
 
-- **Multi-Agent Architecture**: Five specialized MCP servers working in concert
+- **Multi-Agent Architecture**: Four specialized MCP servers working in concert
 - **Knowledge Graph**: Neo4j-based graph with AST-derived structure + LLM enrichment
 - **Production Ready**: Docker Compose deployment, health checks, comprehensive logging
 - **FastAPI Gateway**: REST API + WebSocket support for real-time chat
 - **Conversation Context**: Multi-turn conversations with session management
 - **Incremental Updates**: Strategy B fine-grained diffing for efficient re-indexing
+- **Observability**: Optional Langfuse integration for request tracing and LLM monitoring
+- **SSE Transport**: All MCP agents use Server-Sent Events over HTTP for scalability
 
 ## Quick Start
 
@@ -17,7 +19,9 @@ A production-ready multi-agent system that answers questions about the FastAPI c
 
 - Docker and Docker Compose
 - OpenAI API key
-- 4GB+ RAM available
+- Neo4j Aura instance (or local Neo4j 5.15+)
+- 2GB+ RAM available
+- (Optional) Langfuse account for observability
 
 ### Setup
 
@@ -34,18 +38,27 @@ cd graphical-rag
 cp .env.example .env
 ```
 
-Edit `.env` and add your OpenAI API key:
+Edit `.env` and add your credentials:
 
 ```env
 OPENAI_API_KEY=sk-your-openai-api-key-here
+NEO4J_URI=neo4j+s://your-instance.databases.neo4j.io
+NEO4J_USERNAME=neo4j
 NEO4J_PASSWORD=your-secure-password
+
+# Optional: Enable Langfuse observability
+LANGFUSE_PUBLIC_KEY=pk-...
+LANGFUSE_SECRET_KEY=sk-...
+LANGFUSE_HOST=https://cloud.langfuse.com
 ```
 
 3. **Start services**
 
 ```bash
-docker-compose up -d
+docker-compose -f docker-compose.cloud.yml up -d
 ```
+
+> **Note**: This project uses `docker-compose.cloud.yml` which connects to cloud-hosted Neo4j Aura. For local development with a local Neo4j container, you can create a separate `docker-compose.yml` file.
 
 4. **Wait for services to be ready**
 
@@ -85,75 +98,115 @@ curl -X POST http://localhost:8000/api/chat \
 
 ## Architecture
 
-### System Components
+### System Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    User / Client                        │
-└─────────────────────────┬───────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────┐
-│              FastAPI Gateway (Port 8000)                │
-│  • REST API endpoints                                   │
-│  • WebSocket support                                    │
-│  • Session management                                   │
-└─────────────────────────┬───────────────────────────────┘
-                          │
-                          ▼
-┌─────────────────────────────────────────────────────────┐
-│           Orchestrator Agent (MCP Server)               │
-│  • Query analysis                                       │
-│  • Agent routing                                        │
-│  • Response synthesis                                   │
-│  • Conversation context                                 │
-└────┬─────────────────┬──────────────────┬───────────────┘
-     │                 │                  │
-     ▼                 ▼                  ▼
-┌──────────┐    ┌─────────────┐    ┌─────────────┐
-│ Indexer  │    │ Graph Query │    │Code Analyst │
-│  Agent   │    │   Agent     │    │   Agent     │
-│ (MCP)    │    │   (MCP)     │    │   (MCP)     │
-└────┬─────┘    └──────┬──────┘    └──────┬──────┘
-     │                 │                   │
-     └─────────────────┴───────────────────┘
-                       │
-                       ▼
-          ┌────────────────────────┐
-          │   Neo4j Graph Database │
-          │  • AST-derived nodes   │
-          │  • LLM enrichment      │
-          │  • Vector embeddings   │
-          └────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│                      User / Client                         │
+└──────────────────────────┬─────────────────────────────────┘
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────────┐
+│            FastAPI Gateway (Port 8000)                     │
+│  • REST API (/api/chat, /api/index, /api/agents/health)   │
+│  • WebSocket (/ws/chat)                                    │
+│  • Session management                                      │
+│  • Langfuse middleware (optional)                          │
+└──────────────────────────┬─────────────────────────────────┘
+                           │
+                           │ MultiServerMCPClient (SSE)
+                           ▼
+┌────────────────────────────────────────────────────────────┐
+│         Orchestrator Agent (Port 8001) - MCP Server        │
+│  Tools: analyze_query, route_to_agents,                   │
+│         get_conversation_context, synthesize_response      │
+└─────┬──────────────────┬─────────────────┬────────────────┘
+      │                  │                 │
+      │ SSE/HTTP         │ SSE/HTTP        │ SSE/HTTP
+      ▼                  ▼                 ▼
+┌──────────┐      ┌─────────────┐   ┌─────────────┐
+│ Indexer  │      │ Graph Query │   │Code Analyst │
+│  Agent   │      │   Agent     │   │   Agent     │
+│(Port8002)│      │ (Port 8003) │   │ (Port 8004) │
+│          │      │             │   │             │
+│5 tools   │      │  7 tools    │   │  6 tools    │
+│(indexing)│      │(traversal)  │   │ (analysis)  │
+└────┬─────┘      └──────┬──────┘   └──────┬──────┘
+     │                   │                  │
+     │    Neo4j Driver (Bolt Protocol)     │
+     └───────────────────┴──────────────────┘
+                         │
+                         ▼
+           ┌─────────────────────────────┐
+           │  Neo4j Graph Database       │
+           │  (Cloud Aura or Local)      │
+           │                             │
+           │  • Nodes: Module, Class,    │
+           │    Function, Method, etc.   │
+           │  • Edges: CALLS, IMPORTS,   │
+           │    INHERITS_FROM, etc.      │
+           │  • Properties: enrichment,  │
+           │    embeddings, source code  │
+           └─────────────────────────────┘
 ```
 
-### Agent Responsibilities
+**Communication Flow**:
+1. User sends query to Gateway REST/WebSocket endpoint
+2. Gateway forwards to Orchestrator via SSE transport
+3. Orchestrator analyzes query and routes to specialist agents
+4. Agents query Neo4j database and return results
+5. Orchestrator synthesizes final response
+6. Gateway returns response to user
 
-#### 1. Orchestrator Agent
-- Analyzes query intent
-- Routes to appropriate specialist agents
-- Manages conversation context
-- Synthesizes final responses
+### Agent Responsibilities & MCP Tools
 
-#### 2. Indexer Agent
-- Clones and parses repositories
-- Extracts AST entities (classes, functions, imports)
-- Populates Neo4j knowledge graph
-- Runs LLM enrichment for semantics
-- Creates vector embeddings
-- Handles incremental updates
+#### 1. Orchestrator Agent (Port 8001)
+**Purpose**: Central coordinator that routes queries and synthesizes responses
 
-#### 3. Graph Query Agent
-- Executes Cypher queries
-- Traces dependencies and import chains
-- Performs vector similarity search
-- Extracts relevant subgraphs for analysis
+**MCP Tools (4)**:
+- `analyze_query` - Classifies query intent and extracts code entities
+- `route_to_agents` - Routes to specialist agents based on intent
+- `get_conversation_context` - Retrieves session history for multi-turn context
+- `synthesize_response` - Combines multiple agent outputs into coherent response
 
-#### 4. Code Analyst Agent
-- Analyzes function implementations
-- Detects design patterns
-- Explains complex code logic
-- Compares implementations
+#### 2. Indexer Agent (Port 8002)
+**Purpose**: Repository parsing and knowledge graph population
+
+**MCP Tools (5)**:
+- `index_repository` - Full repository indexing (clone → parse → enrich → embed)
+- `index_file` - Incremental single-file indexing with Strategy B diffing
+- `parse_python_ast` - Pure AST parsing without graph writes
+- `extract_entities` - High-level entity summary from Python source
+- `get_index_status` - Check job progress or get graph statistics
+
+**Features**: Background async jobs with polling, enrichment caching, content-hash change detection
+
+#### 3. Graph Query Agent (Port 8003)
+**Purpose**: Knowledge graph traversal and relationship queries
+
+**MCP Tools (7)**:
+- `find_entity` - Locate entities by exact name, fuzzy match, or semantic similarity
+- `get_dependencies` - Find outgoing relationships (what entity depends on)
+- `get_dependents` - Find incoming relationships (what depends on entity)
+- `trace_imports` - Follow module import chains with metadata
+- `find_related` - Get entities connected by specific relationship type
+- `execute_query` - Run custom read-only Cypher queries
+- `get_subgraph` - Bidirectional graph expansion from seed entities
+
+**Features**: Vector similarity search, transitive traversal, auto-relationship type selection
+
+#### 4. Code Analyst Agent (Port 8004)
+**Purpose**: Deep code understanding and pattern analysis
+
+**MCP Tools (6)**:
+- `analyze_function` - Deep function/method analysis with call chains
+- `analyze_class` - Comprehensive class analysis with inheritance
+- `find_patterns` - Detect design patterns (factory, dependency injection, etc.)
+- `get_code_snippet` - Extract source code with surrounding context
+- `explain_implementation` - Trace data flow and execution chains
+- `compare_implementations` - Side-by-side comparison of two entities
+
+**Features**: GraphContextRetriever for enriched analysis, data-flow tracking, pattern recognition
 
 ## API Reference
 
@@ -365,31 +418,76 @@ pytest
 
 ### Running Individual Agents
 
-Each MCP server can be run standalone (stdio transport):
+Each MCP server runs as an SSE server over HTTP:
 
 ```bash
-# Orchestrator
-python -m src.agents.orchestrator.server
+# Orchestrator (port 8001)
+ORCHESTRATOR_HOST=0.0.0.0 ORCHESTRATOR_PORT=8001 python -m src.agents.orchestrator.server
 
-# Indexer
-python -m src.agents.indexer.server
+# Indexer (port 8002)
+INDEXER_HOST=0.0.0.0 INDEXER_PORT=8002 python -m src.agents.indexer.server
 
-# Graph Query
-python -m src.agents.graph_query.server
+# Graph Query (port 8003)
+GRAPH_QUERY_HOST=0.0.0.0 GRAPH_QUERY_PORT=8003 python -m src.agents.graph_query.server
 
-# Code Analyst
-python -m src.agents.code_analyst.server
+# Code Analyst (port 8004)
+CODE_ANALYST_HOST=0.0.0.0 CODE_ANALYST_PORT=8004 python -m src.agents.code_analyst.server
 ```
+
+Each agent exposes `/sse` endpoint for MCP communication and `/health` for health checks.
+
+## Observability & Monitoring
+
+The system includes optional **Langfuse integration** for comprehensive observability:
+
+### Features
+- **Automatic Request Tracing**: All HTTP requests traced via middleware
+- **LLM Call Monitoring**: Token usage, latencies, model parameters
+- **Distributed Tracing**: W3C Trace Context propagation across MCP agents
+- **Session Tracking**: Multi-turn conversations linked via session_id
+- **Performance Metrics**: Request duration, agent routing decisions
+
+### Setup
+
+Add credentials to `.env`:
+```env
+LANGFUSE_PUBLIC_KEY=pk-...
+LANGFUSE_SECRET_KEY=sk-...
+LANGFUSE_HOST=https://cloud.langfuse.com
+```
+
+If these variables are not set, observability is automatically disabled and the system runs without tracing.
+
+### Accessing Traces
+
+Visit [cloud.langfuse.com](https://cloud.langfuse.com) to view:
+- Request traces with nested agent calls
+- LLM generation details (prompts, completions, costs)
+- Session timelines showing conversation flow
+- Performance dashboards and analytics
 
 ## Design Decisions
 
-See [info.md](info.md) for comprehensive architectural documentation, including:
+### Architecture Patterns
 
-- Research foundation (3 academic papers)
-- Two-layer graph architecture (AST + LLM enrichment)
-- Strategy B incremental updates with content-hash caching
-- AST parser validation (11 bugs found and fixed)
-- Known limitations and trade-offs
+**Two-Layer Graph Structure**:
+- **Layer 1 (AST)**: Structural nodes from Python AST (classes, functions, calls, imports)
+- **Layer 2 (Enrichment)**: LLM-generated semantic annotations (patterns, concepts, data flows)
+
+**Incremental Updates**:
+- Strategy B fine-grained diffing with content-hash caching
+- Only changed entities are re-parsed and re-enriched
+- Enrichment cache prevents redundant LLM calls
+
+**Agent Communication**:
+- SSE (Server-Sent Events) transport over HTTP for scalability
+- All agents run as independent services
+- Orchestrator coordinates via FastMCP client with MultiServerMCPClient
+
+**Observability**:
+- OpenTelemetry trace context injection into MCP calls via `MCPTraceContextInterceptor`
+- Langfuse decorators (`@observe`, `trace_function`) for automatic span creation
+- W3C Trace Context format for distributed tracing
 
 ## Configuration
 
@@ -441,14 +539,34 @@ pytest tests/smoke/
 
 ## Deployment
 
-See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions, including:
+### Production Considerations
 
-- Production configuration
-- Security considerations
-- Monitoring and logging
-- Scaling strategies
-- Backup procedures
-- Troubleshooting
+**Neo4j**:
+- Use Neo4j Aura for managed hosting
+- Configure connection pooling in `NEO4J_URI`
+- Set appropriate `NEO4J_PASSWORD` strength
+
+**Agent Scaling**:
+- Each agent can be scaled independently via Docker replicas
+- Use load balancer (e.g., nginx) in front of multiple agent instances
+- Gateway automatically distributes MCP calls across agent URLs
+
+**Security**:
+- Never commit `.env` file with real credentials
+- Use Docker secrets for production credential management
+- Enable HTTPS/TLS for all external-facing endpoints
+- Restrict Neo4j network access to agent services only
+
+**Monitoring**:
+- Enable Langfuse for production tracing
+- Configure health check intervals in `docker-compose.cloud.yml`
+- Set up alerts on agent health endpoint failures
+- Monitor Neo4j memory and query performance
+
+**Backup**:
+- Regular Neo4j database snapshots (Neo4j Aura automatic)
+- Version control all configuration files
+- Document indexing job configurations
 
 ## Performance
 
@@ -459,12 +577,23 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment instructions, includi
 
 ## Known Limitations
 
-1. **Module-level variables**: Not extracted (TypeVars, constants)
-2. **Self.method() resolution**: Requires type inference
-3. **Star imports**: Captured but not fully resolved
-4. **Incremental indexing**: Currently requires manual file paths
+### AST Parser Limitations
+1. **Module-level variables**: TypeVars and constants not extracted
+2. **Self.method() resolution**: Requires type inference (not implemented)
+3. **Star imports**: Captured but not fully resolved (`from module import *`)
+4. **Dynamic imports**: `importlib` and `__import__()` not tracked
+5. **Metaclasses**: Not parsed or represented in graph
 
-See [info.md](info.md) section 4 for complete list of AST parser limitations.
+### Indexing Limitations
+1. **Incremental indexing**: `index_file` requires manual file path specification
+2. **Language support**: Python only (no multi-language support)
+3. **Large files**: Files >10,000 LOC may timeout during enrichment
+4. **Binary files**: Non-text files skipped during repository scanning
+
+### Query Limitations
+1. **Vector search accuracy**: Depends on embedding model quality
+2. **Transitive queries**: Deep traversals (depth >3) can be slow on large graphs
+3. **Concurrent indexing**: Multiple simultaneous `index_repository` jobs may conflict
 
 ## License
 

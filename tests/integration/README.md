@@ -15,35 +15,48 @@ The test suite makes **real HTTP requests** to the running Docker Compose servic
 
 ## Prerequisites
 
-1. **Start Docker Compose services**:
+1. **Configure environment** (`.env` file with credentials):
+   - OpenAI API key
+   - Neo4j Aura connection details (URI, username, password)
+   - Optional: Langfuse observability credentials
+
+2. **Start Docker Compose services**:
    ```bash
-   docker-compose up -d
+   docker-compose -f docker-compose.cloud.yml up -d
    ```
 
-2. **Wait for services to be healthy**:
+3. **Wait for services to be healthy**:
    ```bash
-   docker-compose ps
+   docker-compose -f docker-compose.cloud.yml ps
    ```
 
    All services should show status "Up" and health "healthy":
    - gateway (port 8000)
-   - orchestrator
-   - indexer
-   - graph_query
-   - code_analyst
-   - neo4j (port 7474, 7687)
+   - orchestrator (port 8001)
+   - indexer (port 8002)
+   - graph_query (port 8003)
+   - code_analyst (port 8004)
 
-3. **Index the FastAPI repository** (first time only):
+   **Note**: Neo4j runs in the cloud (Neo4j Aura), not as a Docker container
+
+4. **Index the FastAPI repository** (first time only):
    ```bash
    curl -X POST http://localhost:8000/api/index \
      -H "Content-Type: application/json" \
-     -d '{"repo_url": "https://github.com/tiangolo/fastapi", "full": true}'
+     -d '{
+       "repository_url": "https://github.com/tiangolo/fastapi",
+       "clear_graph": true,
+       "run_enrichment": true,
+       "create_embeddings": true
+     }'
    ```
 
-   Wait for indexing to complete (check status):
+   This returns a `job_id`. Wait for indexing to complete (check status):
    ```bash
-   curl http://localhost:8000/api/index/status/{job_id}
+   curl http://localhost:8000/api/index/status/<job_id>
    ```
+
+   Indexing takes 5-30 minutes depending on enrichment settings.
 
 ## Running the Tests
 
@@ -89,7 +102,7 @@ You can modify the script to run only specific sessions by editing the `run_all_
 
 ## Query Difficulty Levels
 
-Based on [Assignment.md](../../Assignment.md):
+Based on [requirements.md](../../requirements.md):
 
 ### Simple Queries
 - Single agent invocation
@@ -172,8 +185,8 @@ TIMEOUT = 120.0                         # Request timeout in seconds
 ```
 **Solution**: Ensure Docker Compose is running:
 ```bash
-docker-compose up -d
-docker-compose logs gateway
+docker-compose -f docker-compose.cloud.yml up -d
+docker-compose -f docker-compose.cloud.yml logs gateway
 ```
 
 ### Timeout errors
@@ -184,8 +197,8 @@ docker-compose logs gateway
 - Increase `TIMEOUT` constant in the test file
 - Check agent logs for performance issues:
   ```bash
-  docker-compose logs orchestrator
-  docker-compose logs code_analyst
+  docker-compose -f docker-compose.cloud.yml logs orchestrator
+  docker-compose -f docker-compose.cloud.yml logs code_analyst
   ```
 
 ### Repository not indexed
@@ -200,8 +213,17 @@ HTTP 503: Orchestrator client not initialized
 ```
 **Solution**: Wait for orchestrator to fully initialize:
 ```bash
-docker-compose logs orchestrator | grep "initialized"
+docker-compose -f docker-compose.cloud.yml logs orchestrator | grep "initialized"
 ```
+
+### Neo4j connection errors
+```
+HTTP 500: Neo4j connection failed
+```
+**Solution**:
+- Verify Neo4j Aura credentials in `.env` file
+- Check `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD`
+- Ensure your IP is whitelisted in Neo4j Aura console
 
 ## Interpreting Results
 
@@ -236,5 +258,7 @@ After running integration tests:
 ## Related Files
 
 - [src/gateway/routes/chat.py](../../src/gateway/routes/chat.py) - Chat endpoint implementation
-- [docker-compose.yml](../../docker-compose.yml) - Service configuration
-- [Assignment.md](../../Assignment.md) - Original requirements
+- [docker-compose.cloud.yml](../../docker-compose.cloud.yml) - Service configuration
+- [requirements.md](../../requirements.md) - Original assignment requirements
+- [README.md](../../README.md) - Main project documentation
+- [.env.example](../../.env.example) - Environment configuration template

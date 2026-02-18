@@ -58,7 +58,14 @@ class Neo4jHandler:
     # ─── Lifecycle ──────────────────────────────────────────
 
     async def connect(self) -> "Neo4jHandler":
-        """Create the async driver and verify connectivity."""
+        """Create the async driver and verify connectivity.
+
+        Returns:
+            Self for method chaining.
+
+        Raises:
+            Exception: If Neo4j connection cannot be established or verified.
+        """
         if self._driver is not None:
             return self
 
@@ -91,7 +98,14 @@ class Neo4jHandler:
 
     @property
     def driver(self) -> AsyncDriver:
-        """Return the raw async driver (for code that needs direct access)."""
+        """Return the raw async driver (for code that needs direct access).
+
+        Returns:
+            Neo4j AsyncDriver instance.
+
+        Raises:
+            RuntimeError: If handler is not connected (call connect() first).
+        """
         if self._driver is None:
             raise RuntimeError("Neo4jHandler is not connected — call connect() first")
         return self._driver
@@ -103,27 +117,62 @@ class Neo4jHandler:
 
     @property
     def uri(self) -> str:
+        """Return the configured Neo4j URI."""
         return self._uri
 
     @property
     def username(self) -> str:
+        """Return the configured Neo4j username."""
         return self._username
 
     # ─── Convenience Query Helpers ──────────────────────────
 
     async def run(self, query: str, params: dict[str, Any] | None = None) -> list[dict]:
-        """Execute a Cypher query and return all results as dicts."""
+        """Execute a Cypher query and return all results as dicts.
+
+        Args:
+            query: Cypher query string.
+            params: Optional query parameters.
+
+        Returns:
+            List of result records as dictionaries.
+
+        Raises:
+            RuntimeError: If handler is not connected (call connect() first).
+            Exception: If query execution fails (invalid syntax, database error, etc.).
+        """
         async with self.driver.session(database=self._database) as session:
             result = await session.run(query, params or {})
             return [record.data() async for record in result]
 
     async def run_single(self, query: str, params: dict[str, Any] | None = None) -> dict | None:
-        """Execute a Cypher query and return the first result, or None."""
+        """Execute a Cypher query and return the first result, or None.
+
+        Args:
+            query: Cypher query string.
+            params: Optional query parameters.
+
+        Returns:
+            First result record as a dict, or None if no results.
+
+        Raises:
+            RuntimeError: If handler is not connected (call connect() first).
+            Exception: If query execution fails (invalid syntax, database error, etc.).
+        """
         results = await self.run(query, params)
         return results[0] if results else None
 
     async def write(self, query: str, params: dict[str, Any] | None = None) -> None:
-        """Execute a write transaction (no return value)."""
+        """Execute a write transaction (no return value).
+
+        Args:
+            query: Cypher write query (CREATE, MERGE, SET, DELETE, etc.).
+            params: Optional query parameters.
+
+        Raises:
+            RuntimeError: If handler is not connected (call connect() first).
+            Exception: If write operation fails (constraint violations, syntax errors, etc.).
+        """
         async with self.driver.session(database=self._database) as session:
             await session.run(query, params or {})
 

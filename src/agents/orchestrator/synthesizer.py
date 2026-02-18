@@ -55,6 +55,11 @@ class ResponseSynthesizer:
 
         Returns:
             Dict with response, agents_used, and had_errors.
+
+        Raises:
+            This method catches LLM errors and returns a fallback response
+            (concatenated raw agent outputs) instead of raising. The dict
+            will have had_errors=True if synthesis fails.
         """
         logger.info("ResponseSynthesizer.synthesize called")
         logger.debug("Query: %s", query)

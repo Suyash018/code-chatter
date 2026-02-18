@@ -42,6 +42,11 @@ class PythonASTParser:
 
         Returns:
             Dictionary with file_hash, classes, functions, imports, calls.
+            If a SyntaxError occurs, returns dict with 'parse_error' key.
+
+        Raises:
+            This method catches SyntaxError internally and returns a dict with
+            'parse_error' key instead of raising. Other exceptions may propagate.
         """
         try:
             tree = ast.parse(source)

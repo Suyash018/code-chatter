@@ -76,6 +76,11 @@ class QueryAnalyzer:
         Returns:
             Dict with intent, entities, requires_graph, requires_analysis,
             requires_indexing, and confidence.
+
+        Raises:
+            This method catches all LLM errors (json.JSONDecodeError, KeyError,
+            TypeError) and returns a fallback dict with general_question intent
+            instead of raising. Network errors from the LLM may propagate.
         """
         logger.info("QueryAnalyzer.analyze called")
         logger.debug("Query: %s", query)

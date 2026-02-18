@@ -67,7 +67,20 @@ class ChatResponse(BaseModel):
 async def _call_orchestrator_tool(
     client: Any, tool_name: str, **kwargs
 ) -> dict:
-    """Call an orchestrator tool and return parsed JSON result."""
+    """Call an orchestrator tool and return parsed JSON result.
+
+    Args:
+        client: MCP client instance connected to orchestrator.
+        tool_name: Name of the tool to invoke.
+        **kwargs: Tool-specific parameters.
+
+    Returns:
+        Parsed JSON response from the tool as a dictionary.
+
+    Raises:
+        HTTPException: If tool not found (500), JSON parsing fails (500),
+            or any other error occurs during tool invocation (500).
+    """
     try:
         tools = await client.get_tools()
         tool = next((t for t in tools if t.name == tool_name), None)
@@ -121,7 +134,22 @@ async def _call_orchestrator_tool(
 async def _process_chat_message(
     client: Any, message: str, session_id: str
 ) -> ChatResponse:
-    """Process a chat message through the orchestrator pipeline."""
+    """Process a chat message through the orchestrator pipeline.
+
+    Executes the full pipeline: query analysis → agent routing → response synthesis.
+
+    Args:
+        client: MCP client connected to orchestrator.
+        message: User's query message.
+        session_id: Session ID for conversation context.
+
+    Returns:
+        ChatResponse with synthesized answer, intent, entities, and agents called.
+
+    Raises:
+        HTTPException: If any orchestrator tool call fails.
+        Exception: If response formatter fails (degrades gracefully to raw response).
+    """
 
     # Step 1: Analyze the query
     logger.info(f"Analyzing query for session {session_id}")
@@ -203,6 +231,18 @@ async def chat(request_body: ChatRequest, request: Request) -> ChatResponse:
     3. Synthesizes a coherent response from agent outputs
 
     Supports multi-turn conversations via session_id for context retention.
+
+    Args:
+        request_body: ChatRequest containing user message and optional session_id.
+        request: FastAPI request object (for accessing app state).
+
+    Returns:
+        ChatResponse with synthesized answer, metadata, and suggestive follow-ups.
+
+    Raises:
+        HTTPException:
+            - 503 if orchestrator client not initialized
+            - 500 for unexpected internal errors during message processing
     """
     client = request.app.state.orchestrator_client
 
@@ -236,99 +276,3 @@ async def chat(request_body: ChatRequest, request: Request) -> ChatResponse:
             detail=f"Internal server error: {str(e)}"
         )
 
-
-# ─── WebSocket /ws/chat ─────────────────────────────────────
-
-
-@router.websocket("/ws/chat")
-async def websocket_chat(websocket: WebSocket):
-    """Real-time chat with streaming responses via WebSocket.
-
-    Supports multi-turn conversations with the same session_id.
-
-    Message format (client → server):
-    {
-        "message": "What is the FastAPI class?",
-        "session_id": "optional-uuid"
-    }
-
-    Message format (server → client):
-    {
-        "type": "response",
-        "session_id": "uuid",
-        "response": "The FastAPI class is...",
-        "intent": "code_explanation",
-        "entities": ["FastAPI"],
-        "agents_called": ["graph_query", "code_analyst"],
-        "errors": {}
-    }
-
-    Error format:
-    {
-        "type": "error",
-        "error": "Error message"
-    }
-    """
-    await websocket.accept()
-    logger.info("WebSocket connection established")
-
-    client = websocket.app.state.orchestrator_client
-
-    if not client:
-        await websocket.send_json({
-            "type": "error",
-            "error": "Orchestrator client not initialized"
-        })
-        await websocket.close()
-        return
-
-    try:
-        while True:
-            # Receive message
-            data = await websocket.receive_json()
-            message = data.get("message", "")
-            session_id = data.get("session_id") or str(uuid.uuid4())
-
-            if not message:
-                await websocket.send_json({
-                    "type": "error",
-                    "error": "Empty message"
-                })
-                continue
-
-            logger.info(f"WebSocket message received (session={session_id})")
-
-            try:
-                # Process the message
-                response = await _process_chat_message(
-                    client,
-                    message,
-                    session_id,
-                )
-
-                # Send response
-                await websocket.send_json({
-                    "type": "response",
-                    **response.model_dump()
-                })
-
-            except HTTPException as e:
-                await websocket.send_json({
-                    "type": "error",
-                    "error": e.detail
-                })
-            except Exception as e:
-                logger.exception(f"Error processing WebSocket message: {e}")
-                await websocket.send_json({
-                    "type": "error",
-                    "error": str(e)
-                })
-
-    except WebSocketDisconnect:
-        logger.info("WebSocket connection closed")
-    except Exception as e:
-        logger.exception(f"WebSocket error: {e}")
-        try:
-            await websocket.close()
-        except:
-            pass

@@ -50,8 +50,15 @@ def _safe_rel_filter(raw: str) -> str:
     """Parse a comma-separated relationship string, validate each token
     against the whitelist, and return a Cypher ``TYPE1|TYPE2`` filter.
 
-    Raises ``GraphQueryError`` on invalid tokens.  Returns ALL valid
-    relationships joined with ``|`` when *raw* is empty.
+    Args:
+        raw: Comma-separated relationship type string (e.g., "CALLS,IMPORTS").
+
+    Returns:
+        Cypher-formatted filter string (e.g., "CALLS|IMPORTS").
+        Returns all valid relationships joined with "|" when raw is empty.
+
+    Raises:
+        GraphQueryError: If any relationship type is not in VALID_RELATIONSHIPS.
     """
     if not raw.strip():
         return "|".join(sorted(VALID_RELATIONSHIPS))
@@ -433,7 +440,20 @@ class GraphStore:
         cypher: str,
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Run a validated read-only Cypher query."""
+        """Run a validated read-only Cypher query.
+
+        Args:
+            cypher: Cypher query string (must be read-only).
+            params: Optional query parameters.
+
+        Returns:
+            Dict with 'records' (query results), 'count', and 'truncated' flag.
+
+        Raises:
+            GraphQueryError: If query contains write operations (MERGE, CREATE,
+                DELETE, SET, REMOVE, DROP, LOAD, FOREACH, CALL {}) or if
+                Cypher execution fails.
+        """
         if _WRITE_PATTERN.search(cypher):
             raise GraphQueryError(
                 "Write operations are not allowed. "

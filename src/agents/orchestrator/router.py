@@ -116,7 +116,8 @@ class AgentRouter:
         timeout = self._settings.agent_timeout_seconds
         max_retries = self._settings.max_agent_retries
 
-        logger.info("Calling %s with timeout=%ds, max_retries=%d", agent_name, timeout, max_retries)
+        timeout_str = f"{timeout}s" if timeout is not None else "None"
+        logger.info("Calling %s with timeout=%s, max_retries=%d", agent_name, timeout_str, max_retries)
         last_error = None
         for attempt in range(1, max_retries + 1):
             logger.debug("%s attempt %d/%d starting...", agent_name, attempt, max_retries)

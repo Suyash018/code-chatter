@@ -13,7 +13,7 @@ from typing import Any
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 
-from src.shared.llms import get_openai_mini_model
+from src.shared.llms import get_enrichment_model
 from src.shared.models import FunctionEnrichment, ClassEnrichment
 from src.agents.indexer.enrichment_prompts import (
     ENRICHMENT_SYSTEM_PROMPT,
@@ -40,7 +40,7 @@ class LLMEnricher:
         batch_size: int = 30,
         max_retries: int = 3,
     ):
-        base_model = model or get_openai_mini_model()
+        base_model = get_enrichment_model()
         self._function_chain = base_model.with_structured_output(
             FunctionEnrichment
         )

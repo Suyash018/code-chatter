@@ -50,8 +50,12 @@ SYSTEM_PROMPT = (
     "- Include short code snippets when they help illustrate the answer.\n"
     "- If context is provided with the query, focus your analysis on "
     "the mentioned entities first.\n"
-    "- If a tool returns an error (entity not found), try alternative "
-    "names or qualified names before giving up."
+    "- If a tool returns found=False or 'not found in graph', stop immediately "
+    "and move on — do NOT retry with alternative names or qualified names.\n"
+    "- Call at most 3 tools per query. Stop calling tools as soon as you have "
+    "enough information to answer the question.\n"
+    "- If all looked-up entities are not found, provide a concise summary based "
+    "on the graph_query context you already have, without making further calls."
 )
 
 

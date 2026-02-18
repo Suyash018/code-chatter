@@ -570,10 +570,10 @@ pytest tests/smoke/
 
 ## Performance
 
-- **Indexing**: ~5-30 minutes for FastAPI repo (depending on enrichment)
-- **Query latency**: 2-5 seconds (depends on query complexity)
-- **Graph size**: FastAPI = ~500 nodes, ~1000 edges
-- **Memory**: Neo4j needs 2-4GB, gateway needs 1-2GB
+- **Indexing**: ~30 minutes for FastAPI repo (depending on enrichment)
+- **Query latency**: 20-50 seconds (depends on query complexity)
+- **Graph size**: FastAPI = ~5000 nodes, ~10000 edges
+- **Memory**: gateway needs 1-2GB
 
 ## Known Limitations
 

@@ -20,7 +20,8 @@
       "Bash(curl:*)",
       "Bash(docker-compose ps:*)",
       "Bash(docker-compose:*)",
-      "WebFetch(domain:langfuse.com)"
+      "WebFetch(domain:langfuse.com)",
+      "Bash(findstr:*)"
     ]
   }
 }

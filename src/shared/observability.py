@@ -153,11 +153,14 @@ class LangfuseMiddleware(BaseHTTPMiddleware):
             logger.exception(f"Error in Langfuse middleware: {e}")
 
             if is_langfuse_enabled():
-                langfuse = get_client()
-                langfuse.update_current_trace(
-                    level="ERROR",
-                    output={"error": str(e)},
-                )
+                try:
+                    langfuse = get_client()
+                    langfuse.update_current_trace(
+                        output={"error": str(e)},
+                        tags=["error", "middleware_error"],
+                    )
+                except Exception as langfuse_error:
+                    logger.error(f"Failed to update Langfuse trace: {langfuse_error}")
 
             raise
 
@@ -269,11 +272,14 @@ async def trace_context(
     except Exception as e:
         logger.error(f"Error in trace context: {e}")
         if is_langfuse_enabled():
-            langfuse = get_client()
-            langfuse.update_current_trace(
-                level="ERROR",
-                output={"error": str(e)},
-            )
+            try:
+                langfuse = get_client()
+                langfuse.update_current_trace(
+                    output={"error": str(e)},
+                    tags=["error", "context_error"],
+                )
+            except Exception as langfuse_error:
+                logger.error(f"Failed to update Langfuse trace: {langfuse_error}")
         raise
     finally:
         pass

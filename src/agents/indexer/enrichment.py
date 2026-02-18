@@ -100,13 +100,17 @@ class LLMEnricher:
             complexity="low",
         ).model_dump()
 
-    async def enrich_all_nodes(self, graph_manager) -> int:
+    async def enrich_all_nodes(self, graph_manager, progress_callback=None) -> int:
         """
         Enrich all unenriched Function and Class nodes in the graph.
 
         Uses the enrichment cache to skip entities whose content hasn't changed.
         Enriches nested functions with parent context.
         Returns the number of entities enriched.
+
+        Args:
+            graph_manager: Neo4j graph manager instance.
+            progress_callback: Optional async callable(message: str) to report progress.
         """
         from src.agents.indexer.graph_manager import Neo4jGraphManager
 
@@ -126,9 +130,17 @@ class LLMEnricher:
         )
         total_functions = len(functions)
         logger.info("Enrichment: %d functions to process", total_functions)
+        if progress_callback:
+            await progress_callback(f"Starting enrichment: {total_functions} functions to process")
 
         for i in range(0, total_functions, self._batch_size):
             batch = functions[i : i + self._batch_size]
+
+            # Report progress before processing batch to keep connection alive
+            progress_start = i
+            if progress_callback:
+                await progress_callback(f"Enriching functions: {progress_start}/{total_functions}")
+
             tasks = []
 
             for func in batch:
@@ -180,11 +192,16 @@ class LLMEnricher:
                     logger.error(f"Enrichment task failed: {r}")
                 else:
                     enriched_count += 1
+
+            progress_done = min(i + self._batch_size, total_functions)
             logger.info(
                 "Enrichment progress: %d/%d functions done",
-                min(i + self._batch_size, total_functions),
+                progress_done,
                 total_functions,
             )
+            if progress_callback:
+                await progress_callback(f"Enriching functions: {progress_done}/{total_functions}")
+
 
         # ─── Classes ─────────────────────────────────────────────
         classes = await gm._run(
@@ -197,6 +214,8 @@ class LLMEnricher:
         )
         total_classes = len(classes)
         logger.info("Enrichment: %d classes to process", total_classes)
+        if progress_callback:
+            await progress_callback(f"Starting class enrichment: {total_classes} classes to process")
 
         for i in range(0, total_classes, self._batch_size):
             batch = classes[i : i + self._batch_size]
@@ -258,11 +277,15 @@ class LLMEnricher:
                     logger.error(f"Enrichment task failed: {r}")
                 else:
                     enriched_count += 1
+
+            progress_done = min(i + self._batch_size, total_classes)
             logger.info(
                 "Enrichment progress: %d/%d classes done",
-                min(i + self._batch_size, total_classes),
+                progress_done,
                 total_classes,
             )
+            if progress_callback:
+                await progress_callback(f"Enriching classes: {progress_done}/{total_classes}")
 
         logger.info(
             "Enrichment complete: %d total entities enriched", enriched_count

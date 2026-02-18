@@ -53,6 +53,12 @@ async def _call_indexer_tool(tool_name: str, **kwargs) -> dict:
             )
 
         result = await tool.ainvoke(kwargs)
+
+        # Handle langchain message format: [{'type': 'text', 'text': '...'}]
+        if isinstance(result, list) and len(result) > 0:
+            if isinstance(result[0], dict) and 'text' in result[0]:
+                result = result[0]['text']
+
         return json.loads(result) if isinstance(result, str) else result
 
     except json.JSONDecodeError as e:
@@ -237,6 +243,10 @@ async def get_indexing_status(job_id: str) -> IndexStatusResponse:
         progress = result.get("progress", {})
         job_result = result.get("result")
         error = result.get("error")
+
+        # Handle progress as string (convert to dict with message key)
+        if isinstance(progress, str):
+            progress = {"message": progress} if progress else {}
 
         logger.info(f"Job {job_id} status: {status}")
 

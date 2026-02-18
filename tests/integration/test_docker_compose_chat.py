@@ -1,14 +1,24 @@
 """
-Integration tests for Docker Compose deployment of the chat endpoint.
+Integration tests for Docker Compose deployment - Complete test suite.
 
-This script tests the actual running Docker Compose services by making real HTTP
-requests to POST /api/chat. It validates multi-turn conversations, session management,
-context preservation, and agent coordination.
+This script runs a complete end-to-end test suite:
+1. Index Agent Tests: Indexes the FastAPI repository into Neo4j (15-30 minutes)
+2. Chat Tests: 40-turn conversation tests using the populated graph
+
+The script validates:
+- Repository indexing pipeline (POST /api/index)
+- Job status polling (GET /api/index/status/{job_id})
+- Graph population and statistics (GET /api/graph/statistics)
+- Multi-turn conversations (POST /api/chat)
+- Session management and context preservation
+- Multi-agent coordination
 
 Prerequisites:
     - Run `docker-compose up` before executing these tests
-    - Ensure all services are healthy
+    - Ensure all services are healthy (gateway, indexer, neo4j, orchestrator)
     - Gateway should be accessible at http://localhost:8000
+    - OpenAI API key must be configured for enrichment
+    - Sufficient time for full indexing (15-30 minutes)
 
 Run with:
     python -m pytest tests/integration/test_docker_compose_chat.py -v -s
@@ -25,6 +35,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from httpx import Limits, Timeout
 
 
 # ─── Configuration ──────────────────────────────────────────
@@ -32,6 +43,49 @@ import httpx
 GATEWAY_URL = "http://localhost:8000"
 CHAT_ENDPOINT = f"{GATEWAY_URL}/api/chat"
 TIMEOUT = 120.0  # 2 minutes per request
+
+# ─── Index Testing Configuration ────────────────────────────
+INDEX_ENDPOINT = f"{GATEWAY_URL}/api/index"
+STATUS_ENDPOINT = f"{GATEWAY_URL}/api/index/status"
+GRAPH_STATS_ENDPOINT = f"{GATEWAY_URL}/api/graph/statistics"
+HEALTH_ENDPOINT = f"{GATEWAY_URL}/api/health"
+
+# Repository configuration for indexing
+FASTAPI_REPO_URL = "https://github.com/tiangolo/fastapi.git"
+FASTAPI_BRANCH = "master"
+
+# Polling configuration
+POLL_INTERVAL_SECONDS = 5
+MAX_WAIT_MINUTES = 30
+
+# Validation thresholds for FastAPI repository
+MIN_FILES = 100
+MIN_CLASSES = 300
+MIN_FUNCTIONS = 1500
+MIN_ENRICHMENT_COVERAGE = 80.0  # percentage
+
+
+@dataclass
+class IndexTestResult:
+    """Result of an index test operation."""
+    test_name: str
+    success: bool
+    duration: float
+    error: str | None = None
+    data: dict[str, Any] | None = None
+
+
+@dataclass
+class IndexingJobResult:
+    """Result of the complete indexing job."""
+    job_id: str
+    success: bool
+    duration: float
+    files_indexed: int
+    total_nodes: int
+    total_edges: int
+    enrichment_coverage: float
+    error: str | None = None
 
 
 # ─── Test Queries by Difficulty ────────────────────────────
@@ -414,56 +468,534 @@ class IntegrationTestRunner:
     """Runs integration tests against the Docker Compose deployment."""
 
     def __init__(self):
-        self.client = httpx.Client(timeout=TIMEOUT)
+        # Configure client with extended timeouts and connection pooling
+        # Keep-alive helps prevent connection drops during long polling
+        timeout = Timeout(
+            connect=10.0,    # Connection timeout
+            read=60.0,       # Read timeout (per read operation, not total)
+            write=10.0,      # Write timeout
+            pool=5.0         # Pool connection acquisition timeout
+        )
+        limits = Limits(
+            max_keepalive_connections=5,
+            max_connections=10,
+            keepalive_expiry=300.0  # Keep connections alive for 5 minutes
+        )
+        self.client = httpx.Client(
+            timeout=timeout,
+            limits=limits,
+            follow_redirects=True
+        )
         self.results: list[TestResult] = []
+        self.index_result: IndexingJobResult | None = None
 
     def check_health(self) -> bool:
         """Check if the gateway is healthy."""
+        endpoint = f"{GATEWAY_URL}/api/health"
+        print(f"\n[DEBUG] Health check")
+        print(f"  Endpoint: {endpoint}")
+
         try:
-            response = self.client.get(f"{GATEWAY_URL}/api/health", timeout=10.0)
+            response = self.client.get(endpoint, timeout=10.0)
+            print(f"  Status: {response.status_code}")
+
             if response.status_code == 200:
+                data = response.json() if response.text else {}
+                print(f"  Response: {data}")
                 print("✓ Gateway is healthy")
                 return True
             else:
+                body = response.text[:200] if response.text else "No response body"
+                print(f"  Response: {body}")
                 print(f"✗ Gateway health check failed: {response.status_code}")
                 return False
         except Exception as e:
-            print(f"✗ Cannot connect to gateway: {e}")
+            print(f"  Error type: {type(e).__name__}")
+            print(f"  Error: {e}")
+            print(f"✗ Cannot connect to gateway")
             print(f"  Make sure docker-compose is running and gateway is at {GATEWAY_URL}")
             return False
+
+    def check_index_health(self) -> bool:
+        """Check if index-related endpoints are accessible."""
+        print(f"\n[DEBUG] Index health check")
+        print(f"  Endpoint: {STATUS_ENDPOINT}")
+
+        try:
+            response = self.client.get(STATUS_ENDPOINT, timeout=10.0)
+            print(f"  Status: {response.status_code}")
+
+            if response.status_code == 200:
+                data = response.json() if response.text else {}
+                print(f"  Response: {data}")
+                print("✓ Index status endpoint is accessible")
+                return True
+            else:
+                body = response.text[:200] if response.text else "No response body"
+                print(f"  Response: {body}")
+                print(f"✗ Index status endpoint failed: {response.status_code}")
+                return False
+        except Exception as e:
+            print(f"  Error type: {type(e).__name__}")
+            print(f"  Error: {e}")
+            print(f"✗ Cannot connect to index endpoint")
+            return False
+
+    def trigger_indexing(self) -> tuple[bool, str | None, str | None, float]:
+        """
+        Trigger full repository indexing.
+        Returns: (success, job_id, error, duration)
+        """
+        start_time = time.time()
+
+        request_data = {
+            "repository_url": FASTAPI_REPO_URL,
+            "repository_name": "fastapi",
+            "clear_graph": True,
+            "run_enrichment": True,
+            "create_embeddings": True,
+            "incremental": False
+        }
+
+        print(f"\n[DEBUG] Triggering indexing")
+        print(f"  Endpoint: {INDEX_ENDPOINT}")
+        print(f"  Method: POST")
+        print(f"  Request data: {json.dumps(request_data, indent=2)}")
+        print(f"  Timeout: 60.0s")
+
+        try:
+            response = self.client.post(
+                INDEX_ENDPOINT,
+                json=request_data,
+                timeout=60.0
+            )
+            duration = time.time() - start_time
+
+            print(f"  Response status: {response.status_code}")
+            print(f"  Response time: {duration:.2f}s")
+
+            if response.status_code == 200:
+                data = response.json()
+                print(f"  Response data: {json.dumps(data, indent=2)}")
+                job_id = data.get("job_id")
+                return True, job_id, None, duration
+            else:
+                body = response.text[:500] if response.text else "No response body"
+                print(f"  Response body: {body}")
+                error = response.json().get("detail", "Unknown error") if response.text else "No response"
+                return False, None, f"HTTP {response.status_code}: {error}", duration
+
+        except httpx.TimeoutException as e:
+            duration = time.time() - start_time
+            print(f"  Error: Timeout after 60 seconds")
+            print(f"  Error type: {type(e).__name__}")
+            return False, None, f"Timeout: {str(e)}", duration
+        except Exception as e:
+            duration = time.time() - start_time
+            print(f"  Error type: {type(e).__name__}")
+            print(f"  Error: {e}")
+            return False, None, f"Request error: {str(e)}", duration
+
+    def poll_job_status(
+        self,
+        job_id: str,
+        verbose: bool = True
+    ) -> tuple[bool, dict | None, float]:
+        """
+        Poll job status until completion or timeout.
+        Returns: (success, result_data, duration)
+        """
+        start_time = time.time()
+        max_wait_seconds = MAX_WAIT_MINUTES * 60
+        last_progress = ""
+        status_url = f"{STATUS_ENDPOINT}/{job_id}"
+
+        if verbose:
+            print(f"\n{'='*80}")
+            print(f"Polling job status: {job_id}")
+            print(f"Endpoint: {status_url}")
+            print(f"Max wait time: {MAX_WAIT_MINUTES} minutes")
+            print(f"Poll interval: {POLL_INTERVAL_SECONDS} seconds")
+            print(f"{'='*80}\n")
+
+        poll_count = 0
+        while True:
+            elapsed = time.time() - start_time
+            poll_count += 1
+
+            if elapsed > max_wait_seconds:
+                if verbose:
+                    print(f"\n✗ Timeout after {MAX_WAIT_MINUTES} minutes ({poll_count} polls)")
+                    print(f"  Last endpoint: {status_url}")
+                return False, None, elapsed
+
+            try:
+                if verbose and (poll_count == 1 or poll_count % 10 == 0):
+                    print(f"[DEBUG] Poll #{poll_count} - Making GET request to: {status_url}")
+                    print(f"[DEBUG] Timeout: 30.0s\n")
+
+                response = self.client.get(
+                    status_url,
+                    timeout=30.0
+                )
+
+                if verbose and (poll_count == 1 or poll_count % 10 == 0):
+                    print(f"[DEBUG] Response status code: {response.status_code}")
+                    print(f"[DEBUG] Response headers: {dict(response.headers)}")
+
+                if response.status_code != 200:
+                    error_body = response.text[:500] if response.text else "No response body"
+                    if verbose:
+                        print(f"\n✗ HTTP error: {response.status_code}")
+                        print(f"  Endpoint: {status_url}")
+                        print(f"  Response: {error_body}")
+                    return False, None, elapsed
+
+                data = response.json()
+
+                if verbose and (poll_count == 1 or poll_count % 10 == 0):
+                    print(f"[DEBUG] Response data keys: {list(data.keys())}")
+                    print(f"[DEBUG] Response data: {json.dumps(data, indent=2)}\n")
+
+                status = data.get("status")
+                progress = data.get("progress", {})
+
+                # Display progress if changed
+                progress_str = progress.get("current_phase", "")
+                if progress_str and progress_str != last_progress:
+                    elapsed_min = int(elapsed / 60)
+                    elapsed_sec = int(elapsed % 60)
+                    percent = progress.get("percent_complete", 0)
+                    if verbose:
+                        print(f"[{elapsed_min:02d}:{elapsed_sec:02d}] {progress_str} ({percent:.1f}%)")
+                    last_progress = progress_str
+
+                # Check completion
+                if status == "completed":
+                    result = data.get("result", {})
+                    if verbose:
+                        print(f"\n✓ Indexing completed in {elapsed/60:.1f} minutes")
+                        print(f"  Total polls: {poll_count}")
+                    return True, result, elapsed
+
+                elif status == "failed":
+                    error = data.get("error", "Unknown error")
+                    if verbose:
+                        print(f"\n✗ Indexing failed: {error}")
+                        print(f"  Total polls: {poll_count}")
+                        print(f"  Endpoint: {status_url}")
+                    return False, None, elapsed
+
+                # Still running, wait before next poll
+                time.sleep(POLL_INTERVAL_SECONDS)
+
+            except httpx.TimeoutException as e:
+                if verbose:
+                    print(f"\n✗ Request timeout after 30 seconds")
+                    print(f"  Poll number: {poll_count}")
+                    print(f"  Endpoint: {status_url}")
+                    print(f"  Error: {e}")
+                return False, None, elapsed
+            except httpx.RemoteProtocolError as e:
+                # Connection was closed - retry with exponential backoff
+                retry_delay = min(5.0 * (1.5 ** min(poll_count % 5, 4)), 30.0)
+                if verbose:
+                    print(f"\n⚠ Server connection closed (poll #{poll_count})")
+                    print(f"  Error: {e}")
+                    print(f"  Retrying in {retry_delay:.1f}s...")
+                time.sleep(retry_delay)
+                continue
+            except httpx.ReadError as e:
+                # Connection aborted - retry with exponential backoff
+                retry_delay = min(5.0 * (1.5 ** min(poll_count % 5, 4)), 30.0)
+                if verbose:
+                    print(f"\n⚠ Connection aborted (poll #{poll_count})")
+                    print(f"  Error type: {type(e).__name__}")
+                    print(f"  Error: {e}")
+                    print(f"  Retrying in {retry_delay:.1f}s...")
+                time.sleep(retry_delay)
+                continue
+            except httpx.ConnectError as e:
+                # Failed to connect - retry with exponential backoff
+                retry_delay = min(5.0 * (1.5 ** min(poll_count % 5, 4)), 30.0)
+                if verbose:
+                    print(f"\n⚠ Connection failed (poll #{poll_count})")
+                    print(f"  Error: {e}")
+                    print(f"  Retrying in {retry_delay:.1f}s...")
+                time.sleep(retry_delay)
+                continue
+            except httpx.HTTPError as e:
+                # Generic HTTP error - log and fail
+                if verbose:
+                    print(f"\n✗ HTTP error during polling")
+                    print(f"  Poll number: {poll_count}")
+                    print(f"  Endpoint: {status_url}")
+                    print(f"  Error type: {type(e).__name__}")
+                    print(f"  Error: {e}")
+                return False, None, elapsed
+            except Exception as e:
+                if verbose:
+                    print(f"\n✗ Unexpected error during polling")
+                    print(f"  Poll number: {poll_count}")
+                    print(f"  Endpoint: {status_url}")
+                    print(f"  Error type: {type(e).__name__}")
+                    print(f"  Error: {e}")
+                    import traceback
+                    print(f"\n  Traceback:")
+                    traceback.print_exc()
+                return False, None, elapsed
+
+    def validate_graph_statistics(
+        self,
+        expected_min_nodes: int = 0,
+        verbose: bool = True
+    ) -> tuple[bool, dict | None, list[str]]:
+        """
+        Fetch and validate graph statistics.
+        Returns: (success, stats_data, warnings)
+        """
+        if verbose:
+            print(f"\n[DEBUG] Fetching graph statistics")
+            print(f"  Endpoint: {GRAPH_STATS_ENDPOINT}")
+            print(f"  Timeout: 30.0s")
+
+        try:
+            response = self.client.get(GRAPH_STATS_ENDPOINT, timeout=30.0)
+
+            if verbose:
+                print(f"  Status: {response.status_code}")
+
+            if response.status_code != 200:
+                body = response.text[:200] if response.text else "No response body"
+                if verbose:
+                    print(f"  Response: {body}")
+                return False, None, [f"HTTP {response.status_code}"]
+
+            data = response.json()
+
+            if verbose:
+                print(f"  Response data: {json.dumps(data, indent=2)}")
+
+            warnings = []
+
+            # Extract counts
+            total_nodes = data.get("total_nodes", 0)
+            total_edges = data.get("total_edges", 0)
+            enrichment_coverage = data.get("enrichment_coverage", 0.0)
+
+            # Validate
+            if total_nodes < expected_min_nodes:
+                warnings.append(f"Too few nodes: {total_nodes} (expected >= {expected_min_nodes})")
+
+            if total_edges == 0:
+                warnings.append("No edges found in graph")
+
+            if enrichment_coverage < MIN_ENRICHMENT_COVERAGE:
+                warnings.append(f"Low enrichment coverage: {enrichment_coverage:.1f}% (expected >= {MIN_ENRICHMENT_COVERAGE}%)")
+
+            if verbose and not warnings:
+                print(f"✓ Graph validation passed")
+                print(f"  Nodes: {total_nodes:,}")
+                print(f"  Edges: {total_edges:,}")
+                print(f"  Enrichment: {enrichment_coverage:.1f}%")
+
+            return True, data, warnings
+
+        except httpx.TimeoutException as e:
+            if verbose:
+                print(f"  Error: Timeout after 30 seconds")
+                print(f"  Error type: {type(e).__name__}")
+            return False, None, [f"Timeout: {str(e)}"]
+        except Exception as e:
+            if verbose:
+                print(f"  Error type: {type(e).__name__}")
+                print(f"  Error: {e}")
+            return False, None, [f"Request error: {str(e)}"]
+
+    def run_index_tests(self, verbose: bool = True) -> IndexingJobResult:
+        """
+        Run complete index test suite:
+        1. Health checks
+        2. Trigger indexing
+        3. Poll until completion
+        4. Validate graph
+
+        Returns IndexingJobResult with all metrics.
+        """
+        if verbose:
+            print("\n" + "="*80)
+            print("INDEX AGENT INTEGRATION TESTS")
+            print("="*80)
+
+        # Step 1: Health check
+        if verbose:
+            print("\n[HEALTH CHECK]")
+
+        if not self.check_index_health():
+            return IndexingJobResult(
+                job_id="",
+                success=False,
+                duration=0,
+                files_indexed=0,
+                total_nodes=0,
+                total_edges=0,
+                enrichment_coverage=0.0,
+                error="Health check failed"
+            )
+
+        # Step 2: Trigger indexing
+        if verbose:
+            print(f"\n[TRIGGER INDEXING]")
+            print(f"Repository: {FASTAPI_REPO_URL}")
+            print(f"Configuration: full index, enrichment: true, embeddings: true")
+
+        success, job_id, error, trigger_duration = self.trigger_indexing()
+
+        if not success:
+            return IndexingJobResult(
+                job_id="",
+                success=False,
+                duration=trigger_duration,
+                files_indexed=0,
+                total_nodes=0,
+                total_edges=0,
+                enrichment_coverage=0.0,
+                error=error
+            )
+
+        if verbose:
+            print(f"✓ Indexing job started: {job_id}")
+
+        # Step 3: Poll until completion
+        if verbose:
+            print(f"\n[POLLING JOB STATUS]")
+
+        success, result, poll_duration = self.poll_job_status(job_id, verbose)
+
+        if not success:
+            return IndexingJobResult(
+                job_id=job_id,
+                success=False,
+                duration=poll_duration,
+                files_indexed=0,
+                total_nodes=0,
+                total_edges=0,
+                enrichment_coverage=0.0,
+                error="Indexing job failed or timed out"
+            )
+
+        # Step 4: Validate graph statistics
+        if verbose:
+            print(f"\n[VALIDATE GRAPH]")
+
+        stats_success, stats, warnings = self.validate_graph_statistics(
+            expected_min_nodes=1000,
+            verbose=verbose
+        )
+
+        if warnings and verbose:
+            print("\n⚠ Validation warnings:")
+            for warning in warnings:
+                print(f"  - {warning}")
+
+        # Extract metrics
+        files_indexed = result.get("files", 0)
+        node_counts = result.get("node_counts", {})
+        edge_counts = result.get("edge_counts", {})
+        total_nodes = sum(node_counts.values()) if node_counts else 0
+        total_edges = sum(edge_counts.values()) if edge_counts else 0
+
+        # Calculate enrichment coverage
+        enriched = result.get("enriched", 0)
+        total_entities = result.get("classes", 0) + result.get("functions", 0)
+        enrichment_coverage = (100 * enriched / total_entities) if total_entities > 0 else 0.0
+
+        # Print summary
+        if verbose:
+            print(f"\n{'='*80}")
+            print("INDEX TEST SUMMARY")
+            print(f"{'='*80}")
+            print(f"Files indexed: {files_indexed}")
+            print(f"Total nodes: {total_nodes:,}")
+            print(f"Total edges: {total_edges:,}")
+            print(f"Enrichment coverage: {enrichment_coverage:.1f}%")
+            print(f"Duration: {poll_duration/60:.1f} minutes")
+            print(f"Status: {'✓ SUCCESS' if not warnings else '⚠ WARNINGS'}")
+            print(f"{'='*80}\n")
+
+        return IndexingJobResult(
+            job_id=job_id,
+            success=True,
+            duration=poll_duration,
+            files_indexed=files_indexed,
+            total_nodes=total_nodes,
+            total_edges=total_edges,
+            enrichment_coverage=enrichment_coverage,
+            error=None if not warnings else "; ".join(warnings)
+        )
 
     def send_chat_message(
         self,
         message: str,
-        session_id: str
+        session_id: str,
+        verbose: bool = False
     ) -> tuple[bool, dict | None, str | None, float]:
         """Send a chat message and return (success, response_data, error, duration)."""
         start_time = time.time()
 
+        request_data = {
+            "message": message,
+            "session_id": session_id,
+            "stream": False
+        }
+
+        if verbose:
+            print(f"\n[DEBUG] Sending chat message")
+            print(f"  Endpoint: {CHAT_ENDPOINT}")
+            print(f"  Method: POST")
+            print(f"  Message: {message[:100]}{'...' if len(message) > 100 else ''}")
+            print(f"  Session ID: {session_id}")
+            print(f"  Timeout: {TIMEOUT}s")
+
         try:
             response = self.client.post(
                 CHAT_ENDPOINT,
-                json={
-                    "message": message,
-                    "session_id": session_id,
-                    "stream": False
-                },
+                json=request_data,
                 timeout=TIMEOUT
             )
             duration = time.time() - start_time
 
+            if verbose:
+                print(f"  Status: {response.status_code}")
+                print(f"  Response time: {duration:.2f}s")
+
             if response.status_code == 200:
                 data = response.json()
+                if verbose:
+                    # Print abbreviated response
+                    resp_text = data.get("response", "")
+                    print(f"  Response: {resp_text[:200]}{'...' if len(resp_text) > 200 else ''}")
+                    print(f"  Intent: {data.get('intent', 'unknown')}")
+                    print(f"  Agents: {data.get('agents_called', [])}")
                 return True, data, None, duration
             else:
+                body = response.text[:300] if response.text else "No response body"
+                if verbose:
+                    print(f"  Response body: {body}")
                 error_detail = response.json().get("detail", "Unknown error") if response.text else "No response"
                 return False, None, f"HTTP {response.status_code}: {error_detail}", duration
 
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as e:
             duration = time.time() - start_time
+            if verbose:
+                print(f"  Error: Timeout after {TIMEOUT} seconds")
+                print(f"  Error type: {type(e).__name__}")
             return False, None, f"Timeout after {TIMEOUT}s", duration
         except Exception as e:
             duration = time.time() - start_time
+            if verbose:
+                print(f"  Error type: {type(e).__name__}")
+                print(f"  Error: {e}")
             return False, None, f"Request error: {str(e)}", duration
 
     def run_session(
@@ -484,11 +1016,12 @@ class IntegrationTestRunner:
 
         for turn, query in enumerate(queries, 1):
             if verbose:
-                print(f"Turn {turn}/{num_turns} [{query.difficulty.upper()}]: {query.text}")
+                print(f"\nTurn {turn}/{num_turns} [{query.difficulty.upper()}]: {query.text}")
 
             success, response_data, error, duration = self.send_chat_message(
                 query.text,
-                session_id
+                session_id,
+                verbose=verbose
             )
 
             result = TestResult(
@@ -541,9 +1074,13 @@ class IntegrationTestRunner:
         return session_results
 
     def run_all_sessions(self) -> None:
-        """Run all 4 test sessions (10, 20, 30, 40 turns)."""
+        """
+        Run complete test suite:
+        1. Index agent tests (populate Neo4j)
+        2. Chat tests (40 turns)
+        """
         print("\n" + "="*80)
-        print("DOCKER COMPOSE INTEGRATION TESTS - CHAT ENDPOINT")
+        print("DOCKER COMPOSE INTEGRATION TESTS - COMPLETE SUITE")
         print("="*80)
 
         # Check health first
@@ -553,17 +1090,31 @@ class IntegrationTestRunner:
             print("  Wait for all services to be healthy")
             return
 
-        # Run sessions
-        sessions = [
-            ("Session 1: Basic Exploration", 10),
-            ("Session 2: Medium Depth", 20),
-            ("Session 3: Complex Analysis", 30),
-            ("Session 4: Stress Test", 40),
-        ]
+        # Phase 1: Run index tests to populate graph
+        self.index_result = self.run_index_tests(verbose=True)
 
-        for session_name, num_turns in sessions:
-            self.run_session(session_name, num_turns, verbose=True)
-            time.sleep(2)  # Brief pause between sessions
+        if not self.index_result.success:
+            print("\n✗ Index tests failed - Cannot proceed with chat tests")
+            print(f"  Error: {self.index_result.error}")
+            print("\n  Please check:")
+            print("    - Neo4j is running and accessible")
+            print("    - OpenAI API key is configured")
+            print("    - Repository URL is accessible")
+            print("    - Indexer service logs: docker logs graphical-rag-indexer")
+            return
+
+        if self.index_result.error:  # Warnings present
+            print(f"\n⚠ Index tests completed with warnings: {self.index_result.error}")
+            print("  Proceeding with chat tests...\n")
+
+        time.sleep(3)  # Brief pause between index and chat tests
+
+        # Phase 2: Run chat tests (40 turns)
+        print("\n" + "="*80)
+        print("CHAT ENDPOINT TESTS (40 TURNS)")
+        print("="*80)
+
+        self.run_session("Stress Test (40 turns)", 40, verbose=True)
 
         # Final report
         self.print_final_report()
@@ -574,6 +1125,20 @@ class IntegrationTestRunner:
         print("FINAL TEST REPORT")
         print("="*80 + "\n")
 
+        # Index phase summary
+        if self.index_result:
+            print("INDEX PHASE:")
+            print(f"  Job ID: {self.index_result.job_id}")
+            print(f"  Files indexed: {self.index_result.files_indexed}")
+            print(f"  Graph nodes: {self.index_result.total_nodes:,}")
+            print(f"  Graph edges: {self.index_result.total_edges:,}")
+            print(f"  Enrichment: {self.index_result.enrichment_coverage:.1f}%")
+            print(f"  Duration: {self.index_result.duration/60:.1f} minutes")
+            print(f"  Status: {'✓ SUCCESS' if self.index_result.success else '✗ FAILED'}")
+            print()
+
+        # Chat phase summary
+        print("CHAT PHASE:")
         total = len(self.results)
         successful = sum(1 for r in self.results if r.success)
         failed = total - successful

@@ -24,7 +24,7 @@ SKIP_DIRS = {
     "node_modules", ".eggs", "*.egg-info", "venv", ".venv", "env",
     "build", "dist", ".nox",
     "docs_src",  "docs",
-    # "tests",
+    "tests",
 }
 
 SKIP_FILES = {

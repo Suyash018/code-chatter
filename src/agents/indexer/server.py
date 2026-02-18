@@ -326,7 +326,11 @@ async def _run_index_repository_job(
             job.progress = "Running LLM enrichment..."
             logger.info("Starting LLM enrichment...")
             enricher = LLMEnricher()
-            enriched_count = await enricher.enrich_all_nodes(gm)
+
+            async def update_enrichment_progress(message: str):
+                job.progress = message
+
+            enriched_count = await enricher.enrich_all_nodes(gm, progress_callback=update_enrichment_progress)
             logger.info("Enriched %d entities", enriched_count)
             await gm.update_index_state(status="enriched")
         else:
@@ -745,9 +749,12 @@ if __name__ == "__main__":
     logger.info(f"Starting Indexer MCP server (SSE transport on {host}:{port})")
 
     # For SSE transport, use uvicorn with the module path
+    # Configure timeouts for long-running indexing operations
     uvicorn.run(
         "src.agents.indexer.server:app",
         host=host,
         port=port,
         log_level="info",
+        timeout_keep_alive=300,  # Keep connections alive for 5 minutes
+        timeout_graceful_shutdown=30,  # Allow 30s for graceful shutdown
     )

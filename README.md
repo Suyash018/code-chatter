@@ -595,13 +595,7 @@ pytest tests/smoke/
 2. **Transitive queries**: Deep traversals (depth >3) can be slow on large graphs
 3. **Concurrent indexing**: Multiple simultaneous `index_repository` jobs may conflict
 
-## License
 
-[Add your license here]
-
-## Contributors
-
-[Add contributors here]
 
 ## Acknowledgments
 

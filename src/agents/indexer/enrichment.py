@@ -41,6 +41,7 @@ class LLMEnricher:
         max_retries: int = 3,
     ):
         base_model = get_enrichment_model()
+        logger.info("Initializing LLMEnricher with enrichment model: %s", base_model.model_name)
         self._function_chain = base_model.with_structured_output(
             FunctionEnrichment
         )

@@ -70,12 +70,37 @@ built from purpose + summary + docstring + domain concepts.
    (comma-separated) to get the full neighbourhood in one call.
 5. Use execute_query only when the other tools cannot express your need.
 
+## CRITICAL: When to Include Source Code
+
+ALWAYS set include_source=True in your tool calls when the user's query:
+- Asks to "show", "display", or "see" code (e.g. "Show me the Depends function")
+- Requests "examples", "code snippets", or "usage patterns"
+- Asks "how is X implemented?" or "what does X do?"
+- Mentions "code", "implementation", "definition", or "source"
+- Asks about design patterns, decorators, or specific code structures
+- Contains follow-up phrases like "show me the code", "give me an example"
+- Asks to compare implementations (e.g. "Path vs Query parameters")
+
+For these queries:
+- Use include_source=True in find_entity, get_dependencies, get_dependents
+- Prefer get_subgraph which includes source by default
+- Include actual source code in your output to the Code Analyst
+
+For queries that only need structure/relationships (not common):
+- "What inherits from X?" (inheritance tree only)
+- "What imports X?" (dependency list only)
+- Use include_source=False to reduce payload size
+
+When in doubt, ALWAYS include source code. The Code Analyst needs actual
+code to provide meaningful explanations and examples.
+
 ## Output
 
 Compile all tool results into a structured summary.  Include:
 - Entity names and qualified names found
 - Key relationships discovered
-- Source code snippets when relevant
+- **Full source code snippets for all relevant entities** (when include_source=True)
+- File paths and line numbers for code locations
 Report exactly what the graph contains.  Do not fabricate entities
 or relationships that were not returned by the tools.
 """
@@ -120,7 +145,7 @@ class GraphQueryAgent:
         import os
         logger.info("Creating GraphQueryAgent...")
         settings = settings or GraphQuerySettings()
-        logger.debug("Using model: %s", settings.query_model)
+        logger.info("Using query model: %s", settings.query_model)
 
         # Connect via HTTP/SSE to the graph_query service
         graph_query_url = os.getenv("GRAPH_QUERY_URL", "http://graph_query:8003/sse")

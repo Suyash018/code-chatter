@@ -160,7 +160,7 @@ class GraphStore:
         name: str,
         entity_type: str = "any",
         search_mode: str = "hybrid",
-        include_source: bool = False,
+        include_source: bool = True,
         limit: int = 10,
     ) -> list[dict[str, Any]]:
         """Locate code entities by name, fuzzy match, or semantic similarity."""
@@ -230,7 +230,7 @@ class GraphStore:
         qualified_name: str,
         relationship_types: str = "",
         depth: int = 1,
-        include_source: bool = False,
+        include_source: bool = True,    
     ) -> dict[str, Any]:
         """Find outgoing dependencies of an entity."""
         entity = self._resolve_single(qualified_name)
@@ -271,7 +271,7 @@ class GraphStore:
         qualified_name: str,
         relationship_types: str = "",
         depth: int = 1,
-        include_source: bool = False,
+        include_source: bool = True,
     ) -> dict[str, Any]:
         """Find incoming dependents of an entity (reverse traversal)."""
         entity = self._resolve_single(qualified_name)

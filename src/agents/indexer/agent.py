@@ -107,7 +107,7 @@ class IndexerAgent:
         import os
         logger.info("Creating IndexerAgent...")
         settings = settings or IndexerSettings()
-        logger.debug("Using model: %s", settings.enrichment_model)
+        logger.info("Using enrichment model: %s", settings.enrichment_model)
 
         # Connect via HTTP/SSE to the indexer service
         indexer_url = os.getenv("INDEXER_URL", "http://indexer:8002/sse")

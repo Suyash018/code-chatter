@@ -130,7 +130,7 @@ class OrchestratorAgent:
         """
         logger.info("Creating OrchestratorAgent...")
         settings = settings or OrchestratorSettings()
-        logger.debug("Using model: %s", settings.orchestrator_model)
+        logger.info("Using orchestrator model: %s", settings.orchestrator_model)
 
         # Connect to the Orchestrator MCP server over stdio
         logger.info("Connecting to Orchestrator MCP server via stdio...")

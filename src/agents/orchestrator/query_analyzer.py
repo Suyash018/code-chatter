@@ -59,6 +59,7 @@ class QueryAnalyzer:
     """Classifies user queries by intent and extracts mentioned entities."""
 
     def __init__(self, settings: OrchestratorSettings) -> None:
+        logger.info("Initializing QueryAnalyzer with model: %s", settings.analysis_model)
         self._model = get_openai_model(settings.analysis_model)
 
     async def analyze(

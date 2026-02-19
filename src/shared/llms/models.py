@@ -1,9 +1,12 @@
 import os
+import logging
 
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -11,15 +14,19 @@ load_dotenv()
 
 
 def get_openai_model(model_name: str | None = None) -> ChatOpenAI:
+    actual_model = model_name or os.getenv("DEFAULT_MODEL", "gpt-5.2-2025-12-11")
+    logger.info("Creating ChatOpenAI model: %s", actual_model)
     return ChatOpenAI(
-        model=model_name or os.getenv("DEFAULT_MODEL", "gpt-5.2-2025-12-11"),
+        model=actual_model,
         api_key=os.getenv("OPENAI_API_KEY"),
     )
 
 
 def get_openai_mini_model(model_name: str | None = None) -> ChatOpenAI:
+    actual_model = model_name or os.getenv("DEFAULT_MINI_MODEL", "gpt-5-mini-2025-08-07")
+    logger.info("Creating ChatOpenAI mini model: %s", actual_model)
     return ChatOpenAI(
-        model=model_name or os.getenv("DEFAULT_MINI_MODEL", "gpt-5-mini-2025-08-07"),
+        model=actual_model,
         api_key=os.getenv("OPENAI_API_KEY"),
     )
 
@@ -31,7 +38,9 @@ def get_openai_embeddings(model_name: str | None = None) -> OpenAIEmbeddings:
     )
 
 def get_enrichment_model(model_name: str | None = None) -> ChatOpenAI:
+    actual_model = model_name or os.getenv("ENRICHMENT_MODEL", "gpt-5-mini-2025-08-07")
+    logger.info("Creating enrichment model: %s", actual_model)
     return ChatOpenAI(
-        model=model_name or os.getenv("ENRICHMENT_MODEL", "gpt-5-mini-2025-08-07"),
+        model=actual_model,
         api_key=os.getenv("OPENAI_API_KEY"),
     )

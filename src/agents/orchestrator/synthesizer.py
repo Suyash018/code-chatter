@@ -38,6 +38,7 @@ class ResponseSynthesizer:
     """Merges outputs from multiple agents into a coherent response."""
 
     def __init__(self, settings: OrchestratorSettings) -> None:
+        logger.info("Initializing ResponseSynthesizer with model: %s", settings.synthesis_model)
         self._model = get_openai_model(settings.synthesis_model)
 
     async def synthesize(

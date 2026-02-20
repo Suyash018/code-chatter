@@ -198,3 +198,87 @@ Agent coverage: 2 unique agents
 ✓ TESTS PASSED - Excellent performance!
   Success rate: 100.0%
 ================================================================================
+
+
+
+
+
+
+PS E:\project\graphical rag> python -u "e:\project\graphical rag\tests\integration\test_simple_chat.py"
+
+================================================================================
+SIMPLIFIED CHAT INTEGRATION TESTS
+================================================================================
+
+[HEALTH CHECK]
+Endpoint: http://localhost:8000/api/health
+Status: 200
+Response: {'status': 'healthy', 'service': 'FastAPI Gateway', 'version': '0.1.0'}
+✓ Gateway is healthy
+
+
+Session ID: 68dd32ab-4c2c-4f23-99a8-67273c55958c
+
+
+================================================================================
+SIMPLE QUERIES (Single Agent)
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+Turn 1/1 [SIMPLE] - all functions
+
+[QUERY] Get me all functions
+✓ Response (119.42s):
+  Intent: pattern_search
+  Agents: graph_query, code_analyst
+
+  Full Response:
+Here is a consolidated list and summary of some key functions identified in the FastAPI codebase along with their purposes and locations:
+
+1. `run` in `scripts.playwright.separate_openapi_schemas.image01`
+   - Purpose: Automates Chromium browser using Playwright to open the local FastAPI docs at `/docs`, navigate to the "POST /items Create Item" schema tab, and takes a screenshot stored in the docs image folder.
+   - File: `scripts/playwright/separate_openapi_schemas/image01.py`
+
+2. `on_files` in `scripts.mkdocs_hooks`
+   - Purpose: Processes MkDocs configuration to resolve documentation files such as navigation items, theme assets (logo, favicon), extra CSS, and JavaScript files, updating the MkDocs Files collection accordingly.
+   - File: `scripts/mkdocs_hooks.py`
+
+3. `Query` in `fastapi.param_functions`
+   - Purpose: A factory function to declare and configure query parameters in FastAPI route functions. It forwards all supplied validation and metadata arguments to an internal `params.Query`, supporting validation, serialization, OpenAPI schema generation, and documentation.
+   - File: `fastapi/param_functions.py`
+
+4. `head` method in `FastAPI` class (`fastapi.applications`)
+   - Purpose: Registers an HTTP HEAD operation at a given path with comprehensive options like response model, status code, tags, dependencies, summary, and description. Returns a decorator to wrap the user-defined handler function. This method helps define routing and OpenAPI documentation for HEAD requests on FastAPI apps.
+   - File: `fastapi/applications.py`
+
+If you want, I can provide more functions, filter by module, or give full source code examples for any particular function. Let me know how you'd like to proceed!      
+
+  Suggestions: ['More function summaries', 'Filter by module', 'Show code examples']
+
+================================================================================    
+FINAL TEST REPORT
+================================================================================    
+
+Total queries: 1
+Successful: 1 (100.0%)
+Failed: 0 (0.0%)
+
+Results by difficulty:
+  Simple: 1/1 successful
+
+Response time statistics (successful queries):
+  Min: 119.42s
+  Max: 119.42s
+  Average: 119.42s
+  Median: 119.42s
+
+Intent coverage: 1 unique intents
+  Intents: pattern_search
+
+Agent coverage: 2 unique agents
+  Agents: code_analyst, graph_query
+
+================================================================================
+✓ TESTS PASSED - Excellent performance!
+  Success rate: 100.0%
+===============================================================
